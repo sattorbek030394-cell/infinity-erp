@@ -1,6 +1,12 @@
 * {
   box-sizing: border-box;
 }
+.settingsfield {
+  border: 0;
+  padding: 0;
+  margin: 0;
+  min-width: 0;
+}
 body {
   margin: 0;
   background: #f4f6fa;
@@ -136,4 +142,82 @@ p {
 :focus-visible {
   outline: 3px solid #dc8800;
   outline-offset: 3px;
+}
+.searchbar {
+  display: flex;
+  gap: 14px;
+  flex-wrap: wrap;
+  align-items: end;
+  background: #eaf0f5;
+  padding: 20px;
+  border-radius: 12px;
+  margin: 20px 0;
+}
+.searchbar input[type="search"] {
+  min-width: 260px;
+  max-width: 100%;
+}
+.searchbar p {
+  flex-basis: 100%;
+  margin: 0;
+}
+.textlink {
+  padding: 0;
+  background: transparent;
+  border-radius: 0;
+  color: #126d68;
+  text-decoration: underline;
+}
+small {
+  display: block;
+  margin-top: 8px;
+  color: #526174;
+}
+code {
+  overflow-wrap: anywhere;
+}
+.pagecount {
+  padding: 12px;
+  align-self: center;
+}
+.detailsection {
+  margin: 24px 0;
+}
+dl {
+  display: grid;
+  grid-template-columns: 160px 1fr;
+  gap: 14px;
+}
+dt {
+  color: #526174;
+}
+dd {
+  margin: 0;
+  overflow-wrap: anywhere;
+}
+summary {
+  cursor: pointer;
+}
+@media (max-width: 600px) {
+  main {
+    padding: 16px;
+  }
+  .searchbar label {
+    width: 100%;
+  }
+  .searchbar input[type="search"] {
+    min-width: 0;
+    width: 100%;
+  }
+  dl {
+    grid-template-columns: 1fr;
+    gap: 8px;
+  }
+  dd {
+    margin-bottom: 12px;
+  }
+  th,
+  td {
+    padding: 12px;
+  }
 }

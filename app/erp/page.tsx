@@ -23,15 +23,18 @@ export default async function ERP({
   if (!user) redirect("/login");
   const branches = (
     await db.query(
-      "SELECT b.id,b.name FROM branches b JOIN memberships m ON m.branch_id=b.id AND m.tenant_id=b.tenant_id WHERE m.user_id=$1 ORDER BY b.name",
+      "SELECT b.id,b.name FROM branches b JOIN memberships m ON m.branch_id=b.id AND m.tenant_id=b.tenant_id WHERE m.user_id=$1 AND m.role IN ('admin','cashier','viewer') ORDER BY b.name",
       [user.id],
     )
   ).rows;
   if (!branches.length)
     return (
       <main>
-        <h1>Filial biriktirilmagan</h1>
+        <h1>Faol filialga ruxsat yo‘q</h1>
         <p>Administratorga murojaat qiling.</p>
+        <form action="/api/logout" method="post">
+          <button>Chiqish</button>
+        </form>
       </main>
     );
   const query = await searchParams;
@@ -109,6 +112,9 @@ export default async function ERP({
           filialning hisobi alohida.
         </aside>
         <nav aria-label="Modullar">
+          {data.role === "admin" ? (
+            <a href={"/erp/settings?branch=" + branch}>Sozlamalar</a>
+          ) : null}
           {[
             ["dashboard", "Dashboard"],
             ["inventory", "Ombor"],

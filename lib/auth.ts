@@ -23,7 +23,11 @@ export async function scope(branchId: string, write = false) {
   );
   const membership = r.rows[0];
   if (!membership) throw new AccessDeniedError("Filialga ruxsat yo‘q");
-  authorize(membership.role, write);
+  try {
+    authorize(membership.role, write);
+  } catch {
+    throw new AccessDeniedError("Filialga ruxsat yo‘q");
+  }
   return { ...membership, userId: user.id };
 }
 export async function checkOrigin() {

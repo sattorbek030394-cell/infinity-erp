@@ -14,7 +14,15 @@ Texnik yordamchi uchun: Node.js 22+, PostgreSQL 17 va bo‘sh ma’lumotlar baza
 4. `npm run dev` bajaring va [localhost:3000](http://localhost:3000) ni oching.
 5. `demo@example.invalid` va o‘zingiz belgilagan parol bilan kiring. Filialni tanlang. Omborga qurilma qo‘shing → Nasiya shartnomasini yarating → To‘lov kiriting.
 
-`SECOND_BRANCH_NAME` seed paytida ikkinchi filial nomini belgilaydi. Keyingi nom o‘zgarishi administrator tomonidan bazada bajariladi. Foydalanuvchi va ruxsatlarni boshqarish ekrani V1 ga kirmagan.
+`SECOND_BRANCH_NAME` seed paytida ikkinchi filial nomini belgilaydi. Keyingi nom o‘zgarishi administratorning **Sozlamalar** ekranida bajariladi. Mavjud dasturni yangilaganda `npm run migrate` bajaring; seedni qayta ishlatmang.
+
+## Filial va xodimlar
+
+- Administrator filialni tanlab, **Sozlamalar** orqali nomini o‘zgartiradi va xodim qo‘shadi. Yangi xodim uchun kamida 12 belgili dastlabki parol belgilanadi.
+- Administrator boshqaradi; kassir ombor, shartnoma va to‘lov kiritadi; kuzatuvchi faqat ko‘radi. Ruxsat har bir filial uchun alohida.
+- Mavjud xodimni qo‘shish faqat shu tashkilotda, administrator boshqaradigan filiallardagi xodimlar uchun mavjud. Mavjud akkaunt paroli o‘zgartirilmaydi.
+- Xodim kirishini o‘chirish va qayta yoqish mumkin. Keyingi so‘rovlar yangi ruxsatni tekshiradi; boshqa filialdagi ruxsati saqlanadi. Administrator o‘z huquqini olib tashlay olmaydi va filial administratorsiz qolmaydi.
+- Parolni tiklash yoki almashtirish ekrani hali mavjud emas. Dastlab sun’iy xodimlar bilan sinang.
 
 ## Qidiruv va shartnoma tafsilotlari
 
@@ -59,7 +67,7 @@ To‘liq HTTP testi uchun migratsiya qilingan **lokal test bazasi** bilan `INTEG
 
 Production: HTTPS, production DATABASE_URL, APP_ORIGIN ning aniq HTTPS manzili, migratsiyalar, alohida cheklangan DB foydalanuvchisi, backup/restore sinovi kerak. `npm run build` → `npm start`. Demo seedni real bazada ishlatmang.
 
-V1: login parolini tiklash, MFA, foydalanuvchilarni boshqarish UI, qaytarish/bekor qilish, filial transferi, hisobot eksporti, kechikish taqsimoti va to‘liq Kassa yo‘q. Nasiya jadvali bazada mavjud; to‘lovlarni aniq oylarga ajratish hali yo‘q. Production operatsion audit va Excel parity auditi bajarilmagan.
+V1: login parolini tiklash, MFA, qaytarish/bekor qilish, filial transferi, hisobot eksporti, kechikish taqsimoti va to‘liq Kassa yo‘q. Nasiya jadvali bazada mavjud; to‘lovlarni aniq oylarga ajratish hali yo‘q. Production operatsion audit va Excel parity auditi bajarilmagan.
 
 Haqiqiy mijoz, passport, PNFL, haqiqiy to‘lov yoki maxfiy kalitlarni repositoryga kiritmang. Sun’iy seeddagi IMEI ham haqiqiy qurilma emas. Excel/CSV va env fayllari ignore qilingan; ignore qoidasi ma’lumot xavfsizligi tekshiruvi o‘rnini bosmaydi. Real ma’lumot importi V1 da mavjud emas.
 
@@ -70,5 +78,7 @@ Haqiqiy mijoz, passport, PNFL, haqiqiy to‘lov yoki maxfiy kalitlarni repositor
 - POST /api/records — JSON: branchId, kind (inventory/contracts/payments), data. Barcha yozuvlar sessiya va Origin talab qiladi. 200 {id} yoki 400 {error}. Maydonlar lib/domain.ts da.
 - GET /erp?branch=<uuid>&tab=dashboard|inventory|contracts|payments — serverda tekshiriladigan ekranlar.
 - GET /erp/contracts/<uuid>?branch=<uuid> — qurilma, shartnoma jadvali va to‘lov tarixi; shu filial uchun server ruxsati talab qilinadi.
+- GET /erp/settings?branch=<uuid> — faqat filial administratori uchun sozlamalar.
+- POST /api/settings — JSON: branchId, action (rename/create/grant/role) va tegishli maydonlar. Sessiya, Origin va filial administratorining ruxsati talab qilinadi. Ruxsatlar o‘zgarishi auditga yoziladi; parollar yozilmaydi.
 
 O‘zgarishlar uchun branch va PR yarating; test, typecheck, build o‘tishini tekshiring. Xavfsizlik yoki moliyaviy qoida o‘zgarsa integration testni kengaytiring.

@@ -20,6 +20,7 @@ let server: ChildProcess | undefined;
 let cookie = "";
 let viewerCookie = "";
 let outsiderCookie = "";
+const extraUsers: string[] = [];
 async function login(email: string) {
   const r = await fetch(origin + "/api/login", {
     method: "POST",
@@ -136,6 +137,14 @@ after(async () => {
       viewer,
       outsider,
     ]);
+    for (const id of extraUsers) {
+      await pool.query("DELETE FROM sessions WHERE user_id=$1", [id]);
+      await pool.query(
+        "DELETE FROM login_attempts WHERE email IN (SELECT email FROM users WHERE id=$1)",
+        [id],
+      );
+      await pool.query("DELETE FROM users WHERE id=$1", [id]);
+    }
     await pool.query("DELETE FROM tenants WHERE id IN ($1,$2)", [
       tenant,
       otherTenant,
@@ -386,6 +395,242 @@ test(
       body(await get("/erp?branch=" + b2 + "&tab=payments", cookie)).includes(
         "To‘lov topilmadi",
       ),
+    );
+    const settings = async (
+      data: Record<string, unknown>,
+      auth = cookie,
+      source = origin,
+    ) =>
+      fetch(origin + "/api/settings", {
+        method: "POST",
+        headers: {
+          cookie: auth,
+          origin: source,
+          "content-type": "application/json",
+        },
+        body: JSON.stringify({ branchId: b1, ...data }),
+      });
+    assert.ok(
+      (await get("/erp/settings?branch=" + b1)).includes("Xodimlar ruxsatlari"),
+    );
+    for (const auth of [viewerCookie, outsiderCookie]) {
+      const page = await fetch(origin + "/erp/settings?branch=" + b1, {
+        headers: { cookie: auth },
+      });
+      const text = await page.text();
+      assert.ok(text.includes("Sozlamalarga ruxsat yo‘q"));
+      assert.ok(!text.includes(admin + "@example.invalid"));
+      assert.equal(
+        (await settings({ action: "rename", name: "forbidden" }, auth)).status,
+        403,
+      );
+    }
+    assert.equal(
+      (await settings({ action: "rename", name: "forbidden" }, "")).status,
+      403,
+    );
+    assert.equal(
+      (
+        await settings(
+          { action: "rename", name: "forbidden" },
+          cookie,
+          "https://evil.invalid",
+        )
+      ).status,
+      400,
+    );
+    assert.equal(
+      (await settings({ action: "rename", branchId: b3, name: "forbidden" }))
+        .status,
+      403,
+    );
+    assert.equal(
+      (await settings({ action: "rename", name: "Second" })).status,
+      400,
+    );
+    assert.equal(
+      (await settings({ action: "rename", name: "Infinity test renamed" }))
+        .status,
+      200,
+    );
+    assert.equal(
+      (await pool.query("SELECT name FROM branches WHERE id=$1", [b1])).rows[0]
+        .name,
+      "Infinity test renamed",
+    );
+    assert.equal(
+      (await settings({ action: "role", userId: admin, role: "viewer" }))
+        .status,
+      400,
+      "self demotion must not lock out the administrator",
+    );
+    assert.equal(
+      (await settings({ action: "grant", userId: outsider, role: "admin" }))
+        .status,
+      403,
+      "cannot attach unrelated tenant accounts",
+    );
+    assert.equal(
+      (
+        await settings({
+          action: "create",
+          email: outsider + "@example.invalid",
+          password,
+          role: "cashier",
+        })
+      ).status,
+      400,
+    );
+    await login(outsider + "@example.invalid");
+    const staffEmail = randomUUID() + "@example.invalid";
+    assert.equal(
+      (
+        await settings({
+          action: "create",
+          email: staffEmail,
+          password: "short",
+          role: "cashier",
+        })
+      ).status,
+      400,
+    );
+    const created = await settings({
+      action: "create",
+      email: staffEmail,
+      password,
+      role: "cashier",
+    });
+    assert.equal(created.status, 200);
+    const staff = (await created.json()).id;
+    extraUsers.push(staff);
+    const staffCookie = await login(staffEmail);
+    assert.equal(
+      (
+        await settings(
+          { action: "rename", name: "cashier forbidden" },
+          staffCookie,
+        )
+      ).status,
+      403,
+    );
+    assert.equal(
+      (
+        await post(
+          "inventory",
+          { ...input, imei: "333333333333333" },
+          b1,
+          staffCookie,
+        )
+      ).status,
+      200,
+    );
+    assert.equal(
+      (
+        await post(
+          "inventory",
+          { ...input, imei: "444444444444444" },
+          b2,
+          staffCookie,
+        )
+      ).status,
+      400,
+    );
+    assert.equal(
+      (
+        await settings({
+          action: "grant",
+          branchId: b2,
+          userId: staff,
+          role: "viewer",
+        })
+      ).status,
+      200,
+    );
+    assert.equal(
+      (await settings({ action: "role", userId: staff, role: "viewer" }))
+        .status,
+      200,
+    );
+    assert.equal(
+      (
+        await post(
+          "inventory",
+          { ...input, imei: "555555555555555" },
+          b1,
+          staffCookie,
+        )
+      ).status,
+      400,
+      "existing session must obey downgraded role immediately",
+    );
+    assert.equal(
+      (await settings({ action: "role", userId: staff, role: "disabled" }))
+        .status,
+      200,
+    );
+    const blocked = await get(base + "&tab=inventory", staffCookie);
+    assert.ok(blocked.includes("Filialga ruxsat yo‘q"));
+    assert.ok(!blocked.includes(input.imei));
+    assert.equal(
+      (
+        await fetch(origin + "/erp?branch=" + b2 + "&tab=inventory", {
+          headers: { cookie: staffCookie },
+        })
+      ).status,
+      200,
+      "other branch access survives deactivation",
+    );
+    assert.ok((await get("/erp/settings?branch=" + b1)).includes(staffEmail));
+    assert.equal(
+      (await settings({ action: "role", userId: staff, role: "cashier" }))
+        .status,
+      200,
+    );
+    assert.equal(
+      (
+        await post(
+          "inventory",
+          { ...input, imei: "555555555555555" },
+          b1,
+          staffCookie,
+        )
+      ).status,
+      200,
+      "deactivated staff can be restored without changing password",
+    );
+    assert.ok(
+      Number(
+        (
+          await pool.query(
+            "SELECT count(*) n FROM audit_events WHERE tenant_id=$1 AND action LIKE 'membership.%'",
+            [tenant],
+          )
+        ).rows[0].n,
+      ) >= 4,
+    );
+    assert.equal(
+      (await settings({ action: "role", userId: staff, role: "admin" })).status,
+      200,
+    );
+    const adminRace = await Promise.all([
+      settings({ action: "role", userId: staff, role: "viewer" }),
+      settings({ action: "role", userId: admin, role: "viewer" }, staffCookie),
+    ]);
+    assert.deepEqual(
+      adminRace.map((r) => r.status).sort(),
+      [200, 403],
+      "serialized reauthorization must stop mutually demoting admins",
+    );
+    assert.equal(
+      Number(
+        (
+          await pool.query(
+            "SELECT count(*) n FROM memberships WHERE tenant_id=$1 AND branch_id=$2 AND role='admin'",
+            [tenant, b1],
+          )
+        ).rows[0].n,
+      ),
+      1,
     );
     for (let i = 0; i < 5; i++) {
       const wrong = await fetch(origin + "/api/login", {
