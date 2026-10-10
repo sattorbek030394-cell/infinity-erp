@@ -34,6 +34,14 @@ Texnik yordamchi uchun: Node.js 22+, PostgreSQL 17 va bo‘sh ma’lumotlar baza
 
 ## Hisoblash qoidalari
 
+### Qarzdorlar va kechikkan to‘lovlar
+
+**Qarzdorlar** bo‘limida muddati o‘tgan shartnomalar yoki barcha qoldig‘i bor shartnomalar ko‘rsatiladi. Mijoz belgisi, model, IMEI yoki shartnoma ID orqali qidirish mumkin; ro‘yxat 20 tadan sahifalanadi va shartnoma tafsilotlariga olib boradi.
+
+Hisob kuni serverda Toshkent vaqti bilan olinadi. Faqat hisob kunidan oldingi jadval muddatlari kechikkan hisoblanadi. Keyingi to‘lovlar eng eski oylikdan boshlab qoplanadi deb hisoblanadi: kechikkan summa = max(0, avvalgi muddatlarning jami − keyingi to‘lovlar). Boshlang‘ich to‘lov jadvalga kirmaydi. Kechikish kunlari eng eski hali to‘liq qoplanmagan muddatdan sanaladi. Oldindan to‘lash hisobga olinadi; to‘liq yopilgan shartnomalar chiqarilmaydi.
+
+Bu joriy holat hisoboti; tarixiy sana bo‘yicha hisobot yoki to‘lovlarni oylarga bazada biriktirish mavjud emas. Jarima hisoblanmaydi va yozuvlar o‘zgarmaydi. Excel/Kassa mosligi tasdiqlanmagan.
+
 - Valyuta: butun UZS. Kasr, valyuta kursi, avtomatik foiz, jarima va soliq hisoblanmaydi.
 - Kelishilgan jami summa va boshlang‘ich to‘lov qo‘lda kiritiladi. Qolgan summa oylar bo‘yicha butun UZS ga bo‘linadi; yaxlitlash qoldig‘i dastlabki oylarga tarqatiladi.
 - Oylik sanalar boshlanish kuniga mos; qisqa oyda oxirgi kun olinadi. Shartnoma yaratishda jadval bazaga yoziladi.
@@ -76,7 +84,7 @@ Haqiqiy mijoz, passport, PNFL, haqiqiy to‘lov yoki maxfiy kalitlarni repositor
 - POST /api/login — form email/password; muvaffaqiyat: 303, xato: 400/401.
 - POST /api/logout — sessiyani bekor qiladi; 303 yoki 403.
 - POST /api/records — JSON: branchId, kind (inventory/contracts/payments), data. Barcha yozuvlar sessiya va Origin talab qiladi. 200 {id} yoki 400 {error}. Maydonlar lib/domain.ts da.
-- GET /erp?branch=<uuid>&tab=dashboard|inventory|contracts|payments — serverda tekshiriladigan ekranlar.
+- GET /erp?branch=<uuid>&tab=dashboard|inventory|contracts|payments|arrears — serverda tekshiriladigan ekranlar. Qarzdorlar uchun status=all barcha qoldiqlarni, standart holat faqat muddati o‘tganlarni ko‘rsatadi.
 - GET /erp/contracts/<uuid>?branch=<uuid> — qurilma, shartnoma jadvali va to‘lov tarixi; shu filial uchun server ruxsati talab qilinadi.
 - GET /erp/settings?branch=<uuid> — faqat filial administratori uchun sozlamalar.
 - POST /api/settings — JSON: branchId, action (rename/create/grant/role) va tegishli maydonlar. Sessiya, Origin va filial administratorining ruxsati talab qilinadi. Ruxsatlar o‘zgarishi auditga yoziladi; parollar yozilmaydi.

@@ -287,7 +287,13 @@ test(
       { headers: { cookie: outsiderCookie } },
     );
     assert.ok(!(await forbidden.text()).includes(input.imei));
-    for (const tab of ["dashboard", "inventory", "contracts", "payments"])
+    for (const tab of [
+      "dashboard",
+      "inventory",
+      "contracts",
+      "payments",
+      "arrears",
+    ])
       assert.equal(
         (
           await fetch(origin + "/erp?branch=" + b1 + "&tab=" + tab, {
@@ -304,6 +310,26 @@ test(
     const body = (html: string) =>
       html.match(/<tbody>([\s\S]*?)<\/tbody>/)?.[1] ?? "";
     const base = "/erp?branch=" + b1;
+    const arrearsHtml = await get(
+      base + "&tab=arrears&status=all",
+      viewerCookie,
+    );
+    assert.ok(body(arrearsHtml).includes(input.imei));
+    assert.ok(arrearsHtml.includes("eng eski oylikdan"));
+    assert.ok(
+      !body(
+        await get(base + "&tab=arrears&q=absent-debtor", viewerCookie),
+      ).includes(input.imei),
+    );
+    assert.ok(
+      !body(
+        await get("/erp?branch=" + b2 + "&tab=arrears&status=all"),
+      ).includes(input.imei),
+    );
+    const unauthorizedArrears = await fetch(origin + base + "&tab=arrears", {
+      headers: { cookie: outsiderCookie },
+    });
+    assert.ok(!(await unauthorizedArrears.text()).includes(input.imei));
     const detail = "/erp/contracts/" + contract + "?branch=" + b1;
     const detailHtml = await get(detail);
     assert.ok(detailHtml.includes(input.imei));
