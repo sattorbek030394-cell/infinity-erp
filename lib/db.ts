@@ -1,6 +1,6 @@
 import { Pool, type PoolClient } from "pg";
-import { loadEnvConfig } from "@next/env";
-loadEnvConfig(process.cwd());
+import nextEnv from "@next/env";
+nextEnv.loadEnvConfig(process.cwd());
 export const db = new Pool({
   connectionString: process.env.DATABASE_URL,
   max: 10,
