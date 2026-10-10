@@ -287,6 +287,106 @@ test(
         ).status,
         200,
       );
+    const get = async (path: string, auth = cookie) => {
+      const r = await fetch(origin + path, { headers: { cookie: auth } });
+      assert.equal(r.status, 200);
+      return r.text();
+    };
+    const body = (html: string) =>
+      html.match(/<tbody>([\s\S]*?)<\/tbody>/)?.[1] ?? "";
+    const base = "/erp?branch=" + b1;
+    const detail = "/erp/contracts/" + contract + "?branch=" + b1;
+    const detailHtml = await get(detail);
+    assert.ok(detailHtml.includes(input.imei));
+    assert.ok(detailHtml.includes("Oylik jadval"));
+    assert.ok(detailHtml.includes("To‘lov tarixi"));
+    assert.ok(detailHtml.includes("To‘lov kiritish"));
+    assert.ok(!(await get(detail, viewerCookie)).includes("To‘lov kiritish"));
+    for (const [path, auth] of [
+      [detail, outsiderCookie],
+      ["/erp/contracts/" + contract + "?branch=" + b2, cookie],
+      ["/erp/contracts/" + randomUUID() + "?branch=" + b1, cookie],
+    ]) {
+      const r = await fetch(origin + path, { headers: { cookie: auth } });
+      const text = await r.text();
+      assert.ok(text.includes("Shartnoma topilmadi"));
+      assert.ok(!text.includes(input.imei));
+    }
+    const found = await get(
+      base + "&tab=inventory&q=" + input.imei,
+      viewerCookie,
+    );
+    assert.ok(body(found).includes(input.imei));
+    assert.ok(
+      body(
+        await get(base + "&tab=inventory&q=missing-device", viewerCookie),
+      ).includes("Qurilma topilmadi"),
+    );
+    assert.ok(
+      !body(
+        await get(base + "&tab=inventory&status=available", viewerCookie),
+      ).includes(input.imei),
+    );
+    assert.ok(
+      body(
+        await get(base + "&tab=contracts&q=" + input.imei, viewerCookie),
+      ).includes(terms.customerLabel),
+    );
+    assert.ok(
+      body(
+        await get(base + "&tab=contracts&status=paid", viewerCookie),
+      ).includes("Shartnoma topilmadi"),
+    );
+    const dashboard = (html: string) =>
+      html.match(/<div class="cards">([\s\S]*?)<\/div>/)?.[1];
+    assert.equal(
+      dashboard(await get(base + "&tab=dashboard")),
+      dashboard(await get(base + "&tab=dashboard&q=missing-device")),
+    );
+    // Synthetic history fixtures exercise pagination beyond the former 100-row limit.
+    await pool.query(
+      "INSERT INTO payments(id,tenant_id,branch_id,contract_id,amount,method,request_key,created_at) SELECT gen_random_uuid(),$1,$2,$3,1,CASE WHEN g%2=1 THEN 'card' ELSE 'cash' END,gen_random_uuid(),'2026-06-01T00:00:00Z'::timestamptz FROM generate_series(1,105) g",
+      [tenant, b1, contract],
+    );
+    for (const time of ["2026-05-31T21:00:00Z", "2026-06-01T21:00:00Z"])
+      await pool.query(
+        "INSERT INTO payments(id,tenant_id,branch_id,contract_id,amount,method,request_key,created_at) VALUES($1,$2,$3,$4,1,'card',$5,$6)",
+        [randomUUID(), tenant, b1, contract, randomUUID(), time],
+      );
+    const clean = (html: string) => html.replace(/<!--[\s\S]*?-->/g, "");
+    const last = await get(base + "&tab=payments&page=999", viewerCookie);
+    assert.ok(clean(last).includes("109 ta to‘lov topildi."));
+    assert.equal((body(last).match(/<tr>/g) ?? []).length, 9);
+    const filtered = await get(
+      base + "&tab=payments&method=card&from=2026-06-01&to=2026-06-01&page=2",
+      viewerCookie,
+    );
+    assert.ok(
+      clean(filtered).includes("54 ta to‘lov topildi."),
+      "dates must use inclusive Tashkent calendar boundaries",
+    );
+    assert.equal((body(filtered).match(/<tr>/g) ?? []).length, 20);
+    assert.ok(!body(filtered).includes("Naqd"));
+    const contractHistory = await get(detail + "&page=6", viewerCookie);
+    assert.ok(clean(contractHistory).includes("109 ta to‘lov topildi."));
+    assert.equal(
+      (
+        body(contractHistory.split("<h2>To‘lov tarixi</h2>")[1] ?? "").match(
+          /<tr>/g,
+        ) ?? []
+      ).length,
+      9,
+    );
+    assert.ok(
+      body(await get(base + "&tab=payments&q=%25", viewerCookie)).includes(
+        "To‘lov topilmadi",
+      ),
+    );
+    assert.ok(
+      body(await get("/erp?branch=" + b2 + "&tab=payments", cookie)).includes(
+        "To‘lov topilmadi",
+      ),
+    );
     for (let i = 0; i < 5; i++) {
       const wrong = await fetch(origin + "/api/login", {
         method: "POST",

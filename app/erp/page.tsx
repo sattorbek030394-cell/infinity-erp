@@ -3,13 +3,21 @@ import { z } from "zod";
 import { currentUser } from "../../lib/auth";
 import { db } from "../../lib/db";
 import { readBranch } from "../../lib/service";
+import { readPaymentHistory } from "../../lib/history";
+import {
+  matchesSearch,
+  parseFilters,
+  money,
+  type SearchParams,
+} from "../../lib/filters";
 import { RecordForm } from "./record-form";
+import { SearchForm } from "./search-form";
+import { PaymentHistory } from "./payment-history";
 export const dynamic = "force-dynamic";
-const money = (n: unknown) => Number(n).toLocaleString("uz-UZ") + " UZS";
 export default async function ERP({
   searchParams,
 }: {
-  searchParams: Promise<{ branch?: string; tab?: string }>;
+  searchParams: Promise<SearchParams>;
 }) {
   const user = await currentUser();
   if (!user) redirect("/login");
@@ -27,7 +35,8 @@ export default async function ERP({
       </main>
     );
   const query = await searchParams;
-  const branch = query.branch ?? branches[0].id;
+  const branch =
+    typeof query.branch === "string" ? query.branch : branches[0].id;
   if (
     !z.uuid().safeParse(branch).success ||
     !branches.some((b) => b.id === branch)
@@ -37,12 +46,43 @@ export default async function ERP({
         <h1>Filialga ruxsat yo‘q</h1>
       </main>
     );
-  const tab = ["dashboard", "inventory", "contracts", "payments"].includes(
-    query.tab ?? "",
-  )
-    ? query.tab!
-    : "dashboard";
+  const tab =
+    typeof query.tab === "string" &&
+    ["dashboard", "inventory", "contracts", "payments"].includes(query.tab)
+      ? query.tab
+      : "dashboard";
+  const filters = parseFilters(query);
+  const status =
+    typeof query.status === "string" &&
+    ["available", "sold", "active", "paid"].includes(query.status)
+      ? query.status
+      : "";
   const data = await readBranch(branch);
+  const items = data.items.filter(
+    (i) =>
+      matchesSearch(filters.q, i.model, i.imei) &&
+      (!["available", "sold"].includes(status) || i.status === status),
+  );
+  const contracts = data.contracts.filter(
+    (c) =>
+      matchesSearch(filters.q, c.customer_label, c.id, c.model, c.imei) &&
+      (!(status === "active" || status === "paid") ||
+        (status === "active"
+          ? Number(c.balance) > 0
+          : Number(c.balance) === 0)),
+  );
+  const history =
+    tab === "payments" ? await readPaymentHistory(branch, filters) : null;
+  const historyUrl =
+    "/erp?" +
+    new URLSearchParams({
+      branch,
+      tab,
+      q: filters.q,
+      method: filters.method,
+      from: filters.from,
+      to: filters.to,
+    });
   return (
     <>
       <header>
@@ -68,7 +108,7 @@ export default async function ERP({
           V1 • Excel va Kassa hisob-kitoblari auditdan o‘tmagan. Har bir
           filialning hisobi alohida.
         </aside>
-        <nav>
+        <nav aria-label="Modullar">
           {[
             ["dashboard", "Dashboard"],
             ["inventory", "Ombor"],
@@ -123,6 +163,13 @@ export default async function ERP({
             {data.role !== "viewer" && (
               <RecordForm branchId={branch} kind="inventory" items={[]} />
             )}
+            <SearchForm
+              branchId={branch}
+              tab={tab}
+              filters={filters}
+              status={status}
+            />
+            <p>{items.length} ta qurilma topildi.</p>
             <table>
               <thead>
                 <tr>
@@ -133,7 +180,7 @@ export default async function ERP({
                 </tr>
               </thead>
               <tbody>
-                {data.items.map((i) => (
+                {items.map((i) => (
                   <tr key={i.id}>
                     <td>{i.model}</td>
                     <td>{i.imei}</td>
@@ -141,6 +188,14 @@ export default async function ERP({
                     <td>{i.status === "available" ? "Omborda" : "Sotilgan"}</td>
                   </tr>
                 ))}
+                {!items.length ? (
+                  <tr>
+                    <td colSpan={4}>
+                      Qurilma topilmadi. Qidiruv yoki holat filtrini
+                      o‘zgartiring.
+                    </td>
+                  </tr>
+                ) : null}
               </tbody>
             </table>
           </>
@@ -157,50 +212,67 @@ export default async function ERP({
                   .map((i) => ({ id: i.id, label: i.model + " / " + i.imei }))}
               />
             )}
+            <SearchForm
+              branchId={branch}
+              tab={tab}
+              filters={filters}
+              status={status}
+            />
+            <p>{contracts.length} ta shartnoma topildi.</p>
             <table>
               <thead>
                 <tr>
-                  <th>Mijoz belgisi</th>
+                  <th>Mijoz / qurilma</th>
                   <th>Jami</th>
                   <th>Boshlang‘ich</th>
-                  <th>Oy</th>
+                  <th>Muddat</th>
                   <th>Qoldiq</th>
                 </tr>
               </thead>
               <tbody>
-                {data.contracts.map((c) => (
+                {contracts.map((c) => (
                   <tr key={c.id}>
-                    <td>{c.customer_label}</td>
+                    <td>
+                      <a
+                        className="textlink"
+                        href={"/erp/contracts/" + c.id + "?branch=" + branch}
+                      >
+                        {c.customer_label} →
+                      </a>
+                      <small>
+                        {c.model} • {c.imei}
+                      </small>
+                    </td>
                     <td>{money(c.total)}</td>
                     <td>{money(c.down_payment)}</td>
+                    <td>{c.months} oy</td>
                     <td>
-                      <details>
-                        <summary>{c.months} oy • Jadval</summary>
-                        {data.installments
-                          .filter((i) => i.contract_id === c.id)
-                          .map((i) => (
-                            <p key={i.sequence}>
-                              {i.sequence}.{" "}
-                              {new Date(i.due_date).toLocaleDateString(
-                                "uz-UZ",
-                                { timeZone: "Asia/Tashkent" },
-                              )}{" "}
-                              — {money(i.amount)}
-                            </p>
-                          ))}
-                      </details>
+                      {money(c.balance)}
+                      <small>
+                        {Number(c.balance) > 0
+                          ? "Qarzi bor"
+                          : "To‘liq to‘langan"}
+                      </small>
                     </td>
-                    <td>{money(c.balance)}</td>
                   </tr>
                 ))}
+                {!contracts.length ? (
+                  <tr>
+                    <td colSpan={5}>
+                      Shartnoma topilmadi. Qidiruv yoki holat filtrini
+                      o‘zgartiring.
+                    </td>
+                  </tr>
+                ) : null}
               </tbody>
             </table>
             <p>
-              Foiz avtomatik hisoblanmaydi. Kelishilgan jami summa kiritiladi.
+              Shartnomani bosib, oylik jadval va to‘lov tarixini ko‘ring. Foiz
+              avtomatik hisoblanmaydi.
             </p>
           </>
         ) : null}
-        {tab === "payments" ? (
+        {tab === "payments" && history ? (
           <>
             <h1>To‘lovlar</h1>
             {data.role !== "viewer" && (
@@ -215,39 +287,17 @@ export default async function ERP({
                   }))}
               />
             )}
-            <table>
-              <thead>
-                <tr>
-                  <th>Vaqt</th>
-                  <th>Shartnoma</th>
-                  <th>Summa</th>
-                  <th>Usul</th>
-                </tr>
-              </thead>
-              <tbody>
-                {data.payments.map((p) => (
-                  <tr key={p.id}>
-                    <td>
-                      {new Date(p.created_at).toLocaleString("uz-UZ", {
-                        timeZone: "Asia/Tashkent",
-                      })}
-                    </td>
-                    <td>
-                      {
-                        data.contracts.find((c) => c.id === p.contract_id)
-                          ?.customer_label
-                      }
-                    </td>
-                    <td>{money(p.amount)}</td>
-                    <td>{p.method}</td>
-                  </tr>
-                ))}
-              </tbody>
-            </table>
-            <p>
-              Oxirgi 100 ta to‘lov. To‘lovlar o‘chirilmaydi; qaytarish amaliyoti
-              keyingi versiyada.
-            </p>
+            <SearchForm
+              branchId={branch}
+              tab={tab}
+              filters={filters}
+              status=""
+            />
+            <PaymentHistory
+              history={history}
+              branchId={branch}
+              url={historyUrl}
+            />
           </>
         ) : null}
       </main>

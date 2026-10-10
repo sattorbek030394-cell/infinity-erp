@@ -125,22 +125,12 @@ export async function readBranch(branchId: string) {
     args,
   );
   const contracts = await db.query(
-    "SELECT c.*, c.total-c.down_payment-COALESCE((SELECT sum(p.amount) FROM payments p WHERE p.contract_id=c.id),0) balance FROM contracts c WHERE tenant_id=$1 AND branch_id=$2 ORDER BY start_date DESC",
-    args,
-  );
-  const payments = await db.query(
-    "SELECT * FROM payments WHERE tenant_id=$1 AND branch_id=$2 ORDER BY created_at DESC LIMIT 100",
-    args,
-  );
-  const installments = await db.query(
-    "SELECT i.* FROM installments i JOIN contracts c ON c.id=i.contract_id WHERE c.tenant_id=$1 AND c.branch_id=$2 ORDER BY i.sequence",
+    "SELECT c.*, i.model,i.imei,c.total-c.down_payment-COALESCE((SELECT sum(p.amount) FROM payments p WHERE p.contract_id=c.id),0) balance FROM contracts c JOIN inventory i ON i.id=c.inventory_id AND i.tenant_id=c.tenant_id AND i.branch_id=c.branch_id WHERE c.tenant_id=$1 AND c.branch_id=$2 ORDER BY start_date DESC,c.id",
     args,
   );
   return {
     items: items.rows,
     contracts: contracts.rows,
-    payments: payments.rows,
-    installments: installments.rows,
     role: s.role,
   };
 }

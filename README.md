@@ -16,6 +16,14 @@ Texnik yordamchi uchun: Node.js 22+, PostgreSQL 17 va bo‘sh ma’lumotlar baza
 
 `SECOND_BRANCH_NAME` seed paytida ikkinchi filial nomini belgilaydi. Keyingi nom o‘zgarishi administrator tomonidan bazada bajariladi. Foydalanuvchi va ruxsatlarni boshqarish ekrani V1 ga kirmagan.
 
+## Qidiruv va shartnoma tafsilotlari
+
+- Omborda model yoki IMEI orqali qidiring; holatni Omborda/Sotilgan bo‘yicha tanlang.
+- Nasiyada mijoz belgisi, IMEI, model yoki shartnoma ID orqali qidiring. Qarzi bor yoki to‘liq to‘langan shartnomalarni ajrating.
+- Mijoz belgisini bosib, qurilma, jami summa, boshlang‘ich to‘lov, qoldiq, oylik jadval va shu shartnomaning to‘lov tarixini oching. Yozish ruxsati bor xodim shu yerda to‘lov kirita oladi.
+- To‘lovlar tarixida mijoz/IMEI/shartnoma yoki to‘lov ID, usul va sana orqali qidiring. Barcha tarix 20 tadan sahifalanadi; oxirgi 100 ta bilan cheklanmaydi. Sana chegaralari Toshkent vaqtida, ikkala kun ham kiradi.
+- Qidiruv Dashboard summalarini o‘zgartirmaydi. Har bir ekran tanlangan filial va serverdagi ruxsatlar bilan cheklanadi. Viewer shartnoma tafsilotlarini o‘qiydi, to‘lov kirita olmaydi.
+
 ## Hisoblash qoidalari
 
 - Valyuta: butun UZS. Kasr, valyuta kursi, avtomatik foiz, jarima va soliq hisoblanmaydi.
@@ -61,5 +69,6 @@ Haqiqiy mijoz, passport, PNFL, haqiqiy to‘lov yoki maxfiy kalitlarni repositor
 - POST /api/logout — sessiyani bekor qiladi; 303 yoki 403.
 - POST /api/records — JSON: branchId, kind (inventory/contracts/payments), data. Barcha yozuvlar sessiya va Origin talab qiladi. 200 {id} yoki 400 {error}. Maydonlar lib/domain.ts da.
 - GET /erp?branch=<uuid>&tab=dashboard|inventory|contracts|payments — serverda tekshiriladigan ekranlar.
+- GET /erp/contracts/<uuid>?branch=<uuid> — qurilma, shartnoma jadvali va to‘lov tarixi; shu filial uchun server ruxsati talab qilinadi.
 
 O‘zgarishlar uchun branch va PR yarating; test, typecheck, build o‘tishini tekshiring. Xavfsizlik yoki moliyaviy qoida o‘zgarsa integration testni kengaytiring.

@@ -5,10 +5,12 @@ export function RecordForm({
   branchId,
   kind,
   items,
+  selectedId,
 }: {
   branchId: string;
   kind: string;
   items: { id: string; label: string }[];
+  selectedId?: string;
 }) {
   const router = useRouter();
   const [message, setMessage] = useState("");
@@ -99,7 +101,7 @@ export function RecordForm({
         <>
           <label>
             Shartnoma
-            <select name="contractId" required>
+            <select name="contractId" required defaultValue={selectedId ?? ""}>
               <option value="">Tanlang</option>
               {items.map((i) => (
                 <option key={i.id} value={i.id}>

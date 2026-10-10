@@ -4,6 +4,7 @@ import { db } from "./db";
 import { authorize } from "./domain";
 export const digest = (token: string) =>
   createHash("sha256").update(token).digest("hex");
+export class AccessDeniedError extends Error {}
 export async function currentUser() {
   const token = (await cookies()).get("session")?.value;
   if (!token) return null;
@@ -15,13 +16,13 @@ export async function currentUser() {
 }
 export async function scope(branchId: string, write = false) {
   const user = await currentUser();
-  if (!user) throw new Error("Avval tizimga kiring");
+  if (!user) throw new AccessDeniedError("Avval tizimga kiring");
   const r = await db.query(
     "SELECT tenant_id,branch_id,role FROM memberships WHERE user_id=$1 AND branch_id=$2",
     [user.id, branchId],
   );
   const membership = r.rows[0];
-  if (!membership) throw new Error("Filialga ruxsat yo‘q");
+  if (!membership) throw new AccessDeniedError("Filialga ruxsat yo‘q");
   authorize(membership.role, write);
   return { ...membership, userId: user.id };
 }
