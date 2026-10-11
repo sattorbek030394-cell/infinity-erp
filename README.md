@@ -26,13 +26,13 @@ Texnik yordamchi uchun: Node.js 22+, PostgreSQL 17 va bo‘sh ma’lumotlar baza
 
 ## Excel hisobotini yuklash
 
-Eksportga Kassa hali kirmaydi.
+Eksportda Kassa qoldiqlari va Kassa daftari ham bor. Hamyonlar alohida ko‘rsatiladi, noma’lum qoldiq nolga aylantirilmaydi. Kassa summalari aniq qiymatni saqlash uchun valyutasi bilan matn shaklida yoziladi; ular Excelda avtomatik yig‘iladigan son emas. Asl harakat, bekor qilish yozuvi, sabab, manba ID, muallif va yozilgan vaqt saqlanadi. Barcha varaqlar bir xil baza holatidan olinadi.
 
-Filialni tanlab, **Excel hisobotini yuklash** havolasini bosing. `.xlsx` faylda Ma’lumot, Ombor, Nasiya, To‘lovlar va Qarzdorlar varaqlari bor. Tanlangan filialning barcha yozuvlari olinadi; ekrandagi qidiruv, sana yoki sahifa filtrlari eksportga qo‘llanmaydi. Kassir va kuzatuvchi ham o‘zi o‘qishga ruxsatli filial hisobotini yuklay oladi.
+Filialni tanlab, **Excel hisobotini yuklash** havolasini bosing. `.xlsx` faylda Ma’lumot, Ombor, Nasiya, To‘lovlar, Qarzdorlar, Kassa qoldiqlari va Kassa daftari varaqlari bor. Tanlangan filialning barcha yozuvlari olinadi; ekrandagi qidiruv, sana yoki sahifa filtrlari eksportga qo‘llanmaydi. Kassir va kuzatuvchi ham o‘zi o‘qishga ruxsatli filial hisobotini yuklay oladi.
 
 IMEI matn, UZS summalari son sifatida saqlanadi. Sana va kechikish qoidasi faylda yoziladi. Bu qiymatlar nusxasi; formula, makros, parol yoki sessiya ma’lumotlari yo‘q. Barcha varaqlar bazaning bir xil holatidan olinadi. Yuklangan faylni faqat vakolatli odamga bering; dastur uni GitHubga yoki boshqa servisga yubormaydi.
 
-Har bir Ombor/Nasiya/To‘lovlar ro‘yxati 10 000 yozuvgacha. Limitdan oshganda eksport to‘liq rad qilinadi, yozuvlar kesilmaydi. Katta hajmli eksport va Excel/Kassa mosligi auditi hali mavjud emas.
+Har bir Ombor/Nasiya/To‘lovlar/Kassa daftari ro‘yxati 10 000 yozuvgacha. Limitdan oshganda eksport to‘liq rad qilinadi, yozuvlar kesilmaydi. Katta hajmli eksport va to‘liq Excel/Kassa mosligi auditi hali mavjud emas.
 
 ## Qidiruv va shartnoma tafsilotlari
 
@@ -113,7 +113,7 @@ Yangilaganda `npm run migrate` bajaring: `003_cash.sql` kassa jadvallarini yarat
 - Yangi nasiya boshlang‘ich va keyingi to‘lovlari tanlangan usul bo‘yicha avtomatik yoziladi. Moliyaviy yozuv va kassa yozuvi bir tranzaksiyada saqlanadi. Bir xil kalitli takroriy so‘rov pulni ikki marta yozmaydi.
 - Avvalgi shartnoma/to‘lovlar ko‘chirilmagan. Yangi tushumning sanasi shartnoma jadvali boshlanish sanasi emas, pul kiritilgan kun. Avtomatik tushumni qo‘lda yana yozmang.
 - Omborga qurilma kiritish pul sarflanganini anglatmaydi; haqiqiy xaridga alohida chiqim yozing. USD sentlarda, UZS butun sonlarda saqlanadi. Valyuta kursi va USD o‘tkazmasi mavjud emas.
-- Manfiy balans ogohlantirish bilan ko‘rsatiladi. Filiallararo o‘tkazma, investor qarzi/foydasi, naqd savdo modeli va Kassa eksporti mavjud emas. “Investor kapitali” sababi investorning alohida hisobini yaratmaydi.
+- Manfiy balans ogohlantirish bilan ko‘rsatiladi. Filiallararo o‘tkazma, investor qarzi/foydasi va naqd savdo modeli mavjud emas. “Investor kapitali” sababi investorning alohida hisobini yaratmaydi.
 
 ### Xato harakatni bekor qilish
 

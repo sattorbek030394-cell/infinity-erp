@@ -673,6 +673,21 @@ test(
     const exported = Buffer.from(await exportResponse.arrayBuffer());
     assert.equal(exported.readUInt32LE(0), 0x04034b50);
     assert.ok(exported.includes(Buffer.from(input.imei)));
+    assert.ok(exported.includes(Buffer.from("Kassa qoldiqlari")));
+    assert.ok(exported.includes(Buffer.from("Kassa daftari")));
+    assert.ok(
+      !exported.includes(Buffer.from(entryId)),
+      "other branch cash must not leak into export",
+    );
+    const cashExport = await fetch(origin + "/api/export?branch=" + b2, {
+      headers: { cookie },
+    });
+    assert.equal(cashExport.status, 200);
+    const cashBytes = Buffer.from(await cashExport.arrayBuffer());
+    assert.ok(cashBytes.includes(Buffer.from(entryId)));
+    assert.ok(cashBytes.includes(Buffer.from(reversalEntry)));
+    assert.ok(cashBytes.includes(Buffer.from("Bekor qilingan")));
+    assert.ok(cashBytes.includes(Buffer.from("Bekor qilish yozuvi")));
     const arrearsHtml = await get(
       base + "&tab=arrears&status=all",
       viewerCookie,
@@ -1076,6 +1091,19 @@ test(
       "oversized report rejected instead of silently truncating",
     );
     assert.ok((await oversizedExport.text()).includes("10 000"));
+    await pool.query(
+      "WITH ops AS (INSERT INTO cash_operations(id,tenant_id,branch_id,input_hash) SELECT gen_random_uuid(),$1,$2,'synthetic limit' FROM generate_series(1,10001) RETURNING id) INSERT INTO cash_entries(id,tenant_id,branch_id,wallet,entry_date,amount_minor,category,user_id,operation_id) SELECT gen_random_uuid(),$1,$2,'cash_uzs',CURRENT_DATE,1,'SYNTHETIC LIMIT',$3,id FROM ops",
+      [tenant, b1, admin],
+    );
+    assert.equal(
+      (
+        await fetch(origin + "/api/export?branch=" + b1, {
+          headers: { cookie },
+        })
+      ).status,
+      422,
+      "cash ledger limit rejects entire report instead of truncating",
+    );
     for (let i = 0; i < 5; i++) {
       const wrong = await fetch(origin + "/api/login", {
         method: "POST",

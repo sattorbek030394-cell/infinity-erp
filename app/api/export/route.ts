@@ -60,7 +60,32 @@ export async function GET(request: Request) {
           args,
         )
       ).rows;
-      if ([inventory, contracts, payments].some((r) => r.length > 10000))
+      const cashEntries = (
+        await c.query(
+          `SELECT e.id,e.wallet,e.entry_date::text,e.amount_minor::text,e.category,e.note,e.payment_id,e.contract_id,e.operation_id,e.reversal_of,
+ EXISTS(SELECT 1 FROM cash_entries r WHERE r.reversal_of=e.id) reversed,
+ to_char(e.created_at AT TIME ZONE 'Asia/Tashkent','YYYY-MM-DD HH24:MI:SS') recorded_at,u.email author
+ FROM cash_entries e JOIN users u ON u.id=e.user_id WHERE e.tenant_id=$1 AND e.branch_id=$2 ORDER BY e.entry_date,e.created_at,e.id LIMIT 10001`,
+          args,
+        )
+      ).rows;
+      const cashBalances = (
+        await c.query(
+          `SELECT names.wallet,w.opening_date::text,w.opening_minor,
+ COALESCE(sum(e.amount_minor),0)::text movement,
+ CASE WHEN w.opening_minor IS NULL THEN NULL ELSE (w.opening_minor+COALESCE(sum(e.amount_minor),0))::text END balance
+ FROM unnest(ARRAY['cash_uzs','cash_usd','card_uzs','bank_uzs']) names(wallet)
+ LEFT JOIN cash_wallets w ON w.wallet=names.wallet AND w.tenant_id=$1 AND w.branch_id=$2
+ LEFT JOIN cash_entries e ON e.wallet=names.wallet AND e.tenant_id=$1 AND e.branch_id=$2 AND e.entry_date<=$3::date AND (w.opening_date IS NULL OR e.entry_date>=w.opening_date)
+ GROUP BY names.wallet,w.opening_date,w.opening_minor ORDER BY names.wallet`,
+          [...args, branchInfo.today],
+        )
+      ).rows;
+      if (
+        [inventory, contracts, payments, cashEntries].some(
+          (r) => r.length > 10000,
+        )
+      )
         throw new ExportLimitError();
       const arrears = (await c.query(arrearsQuery, [...args, branchInfo.today]))
         .rows;
@@ -72,6 +97,8 @@ export async function GET(request: Request) {
         contracts,
         payments,
         arrears,
+        cashBalances,
+        cashEntries,
       };
     });
     const bytes = await exportWorkbook(data);

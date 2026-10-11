@@ -19,6 +19,32 @@ test("xlsx export preserves IMEI and hostile labels as text, exact numeric amoun
       contracts: [],
       payments: [],
       arrears: [],
+      cashBalances: [
+        {
+          wallet: "cash_usd",
+          opening_minor: "10025",
+          opening_date: "2026-10-11",
+          movement: "-1",
+          balance: "10024",
+        },
+        {
+          wallet: "cash_uzs",
+          opening_minor: null,
+          movement: "500",
+          balance: null,
+        },
+      ],
+      cashEntries: [
+        {
+          id: "synthetic-reversal",
+          wallet: "cash_usd",
+          amount_minor: "-1",
+          reversal_of: "original",
+          category: "Bekor qilish",
+          note: "=SUM(A1:A2)",
+          author: "synthetic@example.invalid",
+        },
+      ],
     }),
   );
   const entries: Record<string, string> = {};
@@ -35,7 +61,14 @@ test("xlsx export preserves IMEI and hostile labels as text, exact numeric amoun
   }
   assert.equal(bytes.readUInt32LE(offset), 0x02014b50);
   assert.equal(bytes.readUInt32LE(bytes.length - 22), 0x06054b50);
-  assert.equal(Object.keys(entries).length, 10);
+  assert.equal(Object.keys(entries).length, 12);
+  assert.ok(entries["xl/worksheets/sheet6.xml"].includes("100.24 USD"));
+  assert.ok(entries["xl/worksheets/sheet6.xml"].includes("Noma’lum"));
+  assert.ok(entries["xl/worksheets/sheet7.xml"].includes("-0.01 USD"));
+  assert.ok(
+    entries["xl/worksheets/sheet7.xml"].includes("Bekor qilish yozuvi"),
+  );
+  assert.ok(entries["xl/worksheets/sheet7.xml"].includes("=SUM(A1:A2)"));
   assert.ok(entries["xl/workbook.xml"].includes("Qarzdorlar"));
   const sheet = entries["xl/worksheets/sheet2.xml"];
   assert.ok(
@@ -61,6 +94,8 @@ test("xlsx export preserves IMEI and hostile labels as text, exact numeric amoun
       contracts: [],
       payments: [],
       arrears: [],
+      cashBalances: [],
+      cashEntries: [],
     }),
   );
 });

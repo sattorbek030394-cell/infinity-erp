@@ -118,7 +118,8 @@ export function CashPanel({
       </p>
       <p>
         USD UZS ga aylantirilmaydi. Filiallararo o‘tkazma va to‘liq investor
-        hisobi V1 ga kirmagan. Excel eksportiga Kassa hali qo‘shilmagan.
+        hisobi V1 ga kirmagan. Excel hisobotida hamyon qoldiqlari va to‘liq
+        Kassa daftari bor.
       </p>
     </>
   );

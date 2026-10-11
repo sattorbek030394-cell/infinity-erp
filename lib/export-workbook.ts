@@ -1,4 +1,5 @@
 import { staticWorkbook, type ExportSheet } from "./xlsx";
+import { cashMoney, walletNames, type Wallet } from "./cash-domain";
 type Row = Record<string, unknown>;
 export type ExportData = {
   branch: string;
@@ -8,6 +9,8 @@ export type ExportData = {
   contracts: Row[];
   payments: Row[];
   arrears: Row[];
+  cashBalances: Row[];
+  cashEntries: Row[];
 };
 export async function exportWorkbook(data: ExportData) {
   const sheets: ExportSheet[] = [];
@@ -39,7 +42,7 @@ export async function exportWorkbook(data: ExportData) {
       ],
       [
         "Valyuta",
-        "Butun UZS. Fayl qiymatlar nusxasi, avtomatik hisoblovchi model emas.",
+        "Nasiya — butun UZS. Kassa — UZS yoki USD; Kassa summalari valyuta bilan aniq matn. Fayl qiymatlar nusxasi.",
       ],
       [
         "Kechikish qoidasi",
@@ -52,6 +55,10 @@ export async function exportWorkbook(data: ExportData) {
       [
         "Xavfsizlik",
         "Yuklangan faylda filial ma’lumotlari bor. Uni faqat vakolatli odamga bering.",
+      ],
+      [
+        "Kassa qoidasi",
+        "Qoldiq = tekshirilgan boshlang‘ich + shu sanadan bugungacha harakatlar. Noma’lum qoldiq nol emas. Bekor qilish asl sanani tuzatadi; asl va qarama-qarshi yozuv ikkalasi saqlanadi. Eski to‘lovlar avtomatik ko‘chirilmagan.",
       ],
     ],
   );
@@ -140,6 +147,67 @@ export async function exportWorkbook(data: ExportData) {
       amount(r.days_late),
     ]),
     [5, 6],
+  );
+  add(
+    "Kassa qoldiqlari",
+    [
+      "Hamyon",
+      "Valyuta",
+      "Boshlang‘ich sana",
+      "Boshlang‘ich qoldiq",
+      "Harakatlar jami",
+      "Joriy qoldiq",
+    ],
+    data.cashBalances.map((r) => {
+      const w = r.wallet as Wallet;
+      return [
+        walletNames[w],
+        w === "cash_usd" ? "USD" : "UZS",
+        text(r.opening_date),
+        r.opening_minor == null ? "Noma’lum" : cashMoney(r.opening_minor, w),
+        cashMoney(r.movement, w),
+        r.balance == null ? "Noma’lum" : cashMoney(r.balance, w),
+      ];
+    }),
+  );
+  add(
+    "Kassa daftari",
+    [
+      "Harakat ID",
+      "Sana",
+      "Hamyon",
+      "Summa",
+      "Sabab",
+      "Izoh",
+      "Holat",
+      "Asl harakat ID",
+      "Amal ID",
+      "To‘lov ID",
+      "Shartnoma ID",
+      "Yozilgan vaqt (Toshkent)",
+      "Muallif",
+    ],
+    data.cashEntries.map((r) => [
+      text(r.id),
+      text(r.entry_date),
+      walletNames[r.wallet as Wallet],
+      cashMoney(r.amount_minor, r.wallet as Wallet),
+      text(r.category),
+      text(r.note),
+      r.reversal_of
+        ? "Bekor qilish yozuvi"
+        : r.reversed
+          ? "Bekor qilingan"
+          : r.payment_id || r.contract_id
+            ? "Nasiya — avtomatik"
+            : "Qo‘lda yozilgan",
+      text(r.reversal_of),
+      text(r.operation_id),
+      text(r.payment_id),
+      text(r.contract_id),
+      text(r.recorded_at),
+      text(r.author),
+    ]),
   );
   return staticWorkbook(sheets);
 }
