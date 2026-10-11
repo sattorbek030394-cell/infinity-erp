@@ -2694,3 +2694,122 @@ test(
     );
   },
 );
+
+test(
+  "HTTP: Kirim kartochkasi to'liq saqlanadi va shartnomada ko'rinadi",
+  { skip: !connection },
+  async () => {
+    const auth = await login(admin + "@example.invalid");
+    const kirim = await post(
+      "inventory",
+      {
+        imei: "356789012345678",
+        imei2: "356789012345678/1",
+        brand: "Iphone",
+        model: "17 Pro Max",
+        memory: "256",
+        simType: "sim+esim",
+        color: "silver",
+        region: "HX/A",
+        condition: "Yangi",
+        battery: "100",
+        purchaseDate: "2026-10-01",
+        costUsd: "850.50",
+        costRate: 12_800,
+        expectedPrice: 12_000_000,
+        supplier: "SYNTHETIC Bahodir aka",
+        receivedBy: "Jamoliddin",
+        purchaseMethod: "cash_usd",
+      },
+      b1,
+      auth,
+    );
+    assert.equal(kirim.status, 200);
+    const item = (await kirim.json()).id;
+    const row = (await pool.query("SELECT * FROM inventory WHERE id=$1", [item]))
+      .rows[0];
+    // 850.50 USD * 12 800 = 10 886 400 so'm
+    assert.equal(Number(row.cost), 10_886_400);
+    assert.equal(Number(row.cost_usd_cents), 85_050);
+    assert.equal(Number(row.cost_rate), 12_800);
+    assert.equal(row.brand, "Iphone");
+    assert.equal(row.memory, "256");
+    assert.equal(row.sim_type, "sim+esim");
+    assert.equal(row.battery, "100");
+    assert.equal(row.purchase_method, "cash_usd");
+    assert.equal(row.received_by, "Jamoliddin");
+    assert.ok(row.supplier_id, "yetkazib beruvchi yaratildi");
+    assert.equal(
+      (
+        await pool.query("SELECT name FROM suppliers WHERE id=$1", [
+          row.supplier_id,
+        ])
+      ).rows[0].name,
+      "SYNTHETIC Bahodir aka",
+    );
+    // Ikkinchi kirim o'sha yetkazib beruvchiga bog'lanadi, dublikat chiqmaydi.
+    const ikkinchi = await post(
+      "inventory",
+      {
+        imei: "J4RMVWVXVV",
+        brand: "Macbook",
+        model: "Air 13",
+        cost: 9_000_000,
+        supplier: "SYNTHETIC Bahodir aka",
+      },
+      b1,
+      auth,
+    );
+    assert.equal(ikkinchi.status, 200, "Apple seriya raqami ham qabul qilinadi");
+    assert.equal(
+      (
+        await pool.query(
+          "SELECT count(*) n FROM suppliers WHERE tenant_id=$1 AND name=$2",
+          [tenant, "SYNTHETIC Bahodir aka"],
+        )
+      ).rows[0].n,
+      "1",
+    );
+    // Tannarxsiz kirim qabul qilinmaydi.
+    assert.equal(
+      (await post("inventory", { imei: "356789012345679", model: "x" }, b1, auth))
+        .status,
+      400,
+    );
+    // Ombor ekranida tavsif va qidiruv ishlaydi.
+    const ombor = await (
+      await fetch(origin + "/erp?branch=" + b1 + "&tab=inventory&q=silver", {
+        headers: { cookie: auth },
+      })
+    ).text();
+    assert.ok(ombor.includes("Iphone 17 Pro Max 256 silver"));
+    assert.ok(ombor.includes("batareyka 100%"));
+    assert.ok(ombor.includes("356789012345678/1"));
+    // Shartnoma chop etilganda tovar nomi to'liq chiqadi.
+    const contract = (
+      await (
+        await post(
+          "contracts",
+          {
+            inventoryId: item,
+            customerName: "SYNTHETIC KIRIM mijoz",
+            priceUzs: 12_000_000,
+            downPayment: 2_000_000,
+            months: 6,
+            monthlyRateBp: 500,
+            startDate: "2026-10-01",
+          },
+          b1,
+          auth,
+        )
+      ).json()
+    ).id;
+    const html = await (
+      await fetch(
+        origin + "/erp/contracts/" + contract + "/shartnoma?branch=" + b1,
+        { headers: { cookie: auth } },
+      )
+    ).text();
+    assert.ok(html.includes("17 Pro Max 256 silver"), "tovar nomi to‘liq");
+  },
+);

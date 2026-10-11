@@ -1,10 +1,6 @@
 import { z } from "zod";
 export const money = z.coerce.number().int().min(1).max(1_000_000_000_000);
-export const itemSchema = z.object({
-  imei: z.string().regex(/^\d{15}$/),
-  model: z.string().trim().min(1).max(100),
-  cost: money,
-});
+
 // Oylik ustama bazis punktda: 500 = oyiga 5%. Butun son bo'lgani uchun
 // kasr xatosi yig'ilmaydi.
 export const rateBp = z.coerce.number().int().min(0).max(10000);
@@ -19,6 +15,55 @@ const ixtiyoriy = <T extends z.ZodType>(s: T) =>
     s.optional(),
   );
 
+// Qurilma identifikatori har doim 15 xonali IMEI emas: Apple seriya
+// raqami (J4RMVWVXVV), noutbuk modeli (15-fd0366nia) ham keladi. Baza ham
+// shu shartni ishlatadi (007 migratsiya).
+export const imeiMatn = z
+  .string()
+  .trim()
+  .regex(
+    /^[A-Za-z0-9][A-Za-z0-9/-]{4,31}$/,
+    "IMEI yoki seriya raqami 5-32 belgi, harf va raqamdan",
+  );
+
+export const TOLOV_TURLARI = [
+  "cash_uzs",
+  "cash_usd",
+  "card",
+  "bank",
+  "debt",
+  "investor",
+] as const;
+
+export const itemSchema = z
+  .object({
+    imei: imeiMatn,
+    imei2: ixtiyoriy(imeiMatn),
+    brand: matn(40),
+    model: z.string().trim().min(1).max(100),
+    memory: matn(20),
+    simType: matn(20),
+    color: matn(30),
+    region: matn(20),
+    condition: matn(20),
+    // Batareyka holati foizda: 0-100.
+    battery: ixtiyoriy(z.coerce.number().int().min(0).max(100)),
+    purchaseDate: ixtiyoriy(z.iso.date()),
+    // Tannarx: so'mda yoki dollarda kurs bilan.
+    cost: ixtiyoriy(money),
+    costUsd: ixtiyoriy(z.string().regex(/^\d{1,9}(\.\d{1,2})?$/)),
+    costRate: ixtiyoriy(z.coerce.number().int().min(1).max(100_000_000)),
+    expectedPrice: ixtiyoriy(money),
+    supplier: matn(120),
+    receivedBy: matn(80),
+    purchaseMethod: ixtiyoriy(z.enum(TOLOV_TURLARI)),
+  })
+  .refine(
+    (v) =>
+      v.cost !== undefined ||
+      (v.costUsd !== undefined && v.costRate !== undefined),
+    { message: "Tannarxni so‘mda yoki dollar va kurs bilan yozing" },
+  );
 export const contractSchema = z
   .object({
     inventoryId: z.uuid(),

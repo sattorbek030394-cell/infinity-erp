@@ -29,14 +29,15 @@ export function RecordForm({
   const [usul, setUsul] = useState("cash");
   const [som, setSom] = useState(0);
   function hisobla(form: HTMLFormElement) {
-    if (kind !== "contracts" && kind !== "payments") return;
     const d = Object.fromEntries(new FormData(form)) as Record<string, string>;
-    if (kind === "payments") {
-      const usd = Number(d.usdAmount),
-        kurs = Number(d.rate);
+    // USD summasi va kurs berilsa so'mdagi qiymat darhol ko'rinadi.
+    if (kind === "payments" || kind === "inventory") {
+      const usd = Number(kind === "payments" ? d.usdAmount : d.costUsd),
+        kurs = Number(kind === "payments" ? d.rate : d.costRate);
       setSom(usd > 0 && kurs > 0 ? Math.round(usd * kurs) : 0);
       return;
     }
+    if (kind !== "contracts") return;
     try {
       setHisob(
         nasiyaTotals(
@@ -123,9 +124,57 @@ export function RecordForm({
     >
       {kind === "inventory" ? (
         <>
+          {ixtiyoriy("brand", "Brend")}
           {field("model", "Model")}
-          {field("imei", "IMEI (15 raqam)")}
-          {field("cost", "Tannarx UZS", "number", 1)}
+          {field("imei", "IMEI yoki seriya raqami")}
+          {ixtiyoriy("imei2", "IMEI 2")}
+          {ixtiyoriy("memory", "Xotira")}
+          {ixtiyoriy("simType", "SIM turi")}
+          {ixtiyoriy("color", "Rang")}
+          {ixtiyoriy("region", "Region")}
+          <label>
+            Qurilma holati
+            <select name="condition" defaultValue="">
+              <option value="">—</option>
+              <option value="Yangi">Yangi</option>
+              <option value="B/U">B/U</option>
+              <option value="Trade-in">Trade-in</option>
+            </select>
+          </label>
+          {ixtiyoriy("battery", "Batareyka %", "number")}
+          {ixtiyoriy("purchaseDate", "Kirim sanasi", "date")}
+          {ixtiyoriy("costUsd", "Tannarx USD")}
+          <label>
+            Kirim kursi (1 USD = so‘m)
+            <input
+              name="costRate"
+              type="number"
+              min={1}
+              step={1}
+              defaultValue={kurs || undefined}
+            />
+          </label>
+          {ixtiyoriy("cost", "Yoki tannarx UZS", "number")}
+          {ixtiyoriy("expectedPrice", "Prognoz sotuv narxi UZS", "number")}
+          {ixtiyoriy("supplier", "Yetkazib beruvchi")}
+          {ixtiyoriy("receivedBy", "Qabul qiluvchi")}
+          <label>
+            To‘lov turi
+            <select name="purchaseMethod" defaultValue="">
+              <option value="">—</option>
+              <option value="cash_uzs">Naqd UZS</option>
+              <option value="cash_usd">Naqd USD</option>
+              <option value="card">Karta</option>
+              <option value="bank">Hisob raqam</option>
+              <option value="debt">Qarzga</option>
+              <option value="investor">Investor tovari</option>
+            </select>
+          </label>
+          {som ? (
+            <p className="hisob">
+              Tannarx so‘mda: <strong>{money(som)}</strong>
+            </p>
+          ) : null}
         </>
       ) : null}
       {kind === "contracts" ? (

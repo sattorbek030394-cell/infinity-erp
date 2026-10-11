@@ -42,6 +42,20 @@ export async function createRecord(
 }
 type Shartnoma = z.infer<typeof contractSchema>;
 
+/** Yetkazib beruvchi nomi bo'yicha topiladi yoki yaratiladi. */
+async function yetkazibBeruvchi(
+  c: Pick<PoolClient, "query">,
+  s: Scope,
+  name: string,
+) {
+  const r = await c.query(
+    `INSERT INTO suppliers(id,tenant_id,name) VALUES($1,$2,$3)
+ ON CONFLICT(tenant_id,name) DO UPDATE SET name=excluded.name RETURNING id`,
+    [randomUUID(), s.tenant_id, name],
+  );
+  return r.rows[0].id as string;
+}
+
 /** PAY-04: to'lovdan ortib qolgan summa mijoz avansi sifatida yoziladi. */
 export async function yozAvans(
   c: Pick<PoolClient, "query">,
@@ -216,9 +230,43 @@ async function writeRecord(
   const id = randomUUID();
   if (kind === "inventory") {
     const v = itemSchema.parse(input);
+    // Tannarx dollarda kelsa kirim kursi bilan so'mga aylantiriladi;
+    // ikkisi ham saqlanadi, chunki foyda hisobi kirim kursiga tayanadi.
+    const usdCents =
+      v.costUsd === undefined ? null : minorUnits(v.costUsd, "cash_usd");
+    const cost =
+      usdCents === null ? v.cost! : Math.round((usdCents * v.costRate!) / 100);
+    if (!Number.isSafeInteger(cost) || cost < 1)
+      throw new Error("Tannarx noto‘g‘ri");
+    const supplierId = v.supplier ? await yetkazibBeruvchi(c, s, v.supplier) : null;
     await c.query(
-      "INSERT INTO inventory(id,tenant_id,branch_id,imei,model,cost) VALUES($1,$2,$3,$4,$5,$6)",
-      [id, s.tenant_id, s.branch_id, v.imei, v.model, v.cost],
+      `INSERT INTO inventory(id,tenant_id,branch_id,imei,imei2,brand,model,memory,sim_type,
+ color,region,condition,battery,purchase_date,cost,cost_usd_cents,cost_rate,
+ expected_price,supplier_id,received_by,purchase_method)
+ VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17,$18,$19,$20,$21)`,
+      [
+        id,
+        s.tenant_id,
+        s.branch_id,
+        v.imei,
+        v.imei2 ?? "",
+        v.brand,
+        v.model,
+        v.memory,
+        v.simType,
+        v.color,
+        v.region,
+        v.condition,
+        v.battery === undefined ? "" : String(v.battery),
+        v.purchaseDate ?? null,
+        cost,
+        usdCents,
+        usdCents === null ? null : v.costRate,
+        v.expectedPrice ?? null,
+        supplierId,
+        v.receivedBy,
+        v.purchaseMethod ?? "",
+      ],
     );
   } else if (kind === "contracts") {
     const v = contractSchema.parse(input);

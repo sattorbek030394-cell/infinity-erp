@@ -90,7 +90,15 @@ export default async function ERP({
   const closures = tab === "closures" ? await readClosures(branch) : null;
   const items = data.items.filter(
     (i) =>
-      matchesSearch(filters.q, i.model, i.imei) &&
+      matchesSearch(
+        filters.q,
+        i.brand,
+        i.model,
+        i.memory,
+        i.color,
+        i.imei,
+        i.imei2,
+      ) &&
       (!["available", "sold"].includes(status) || i.status === status),
   );
   const contracts = data.contracts.filter(
@@ -266,7 +274,12 @@ export default async function ERP({
           <>
             <h1>Ombor</h1>
             {can(data.role, "inventory.create") && (
-              <RecordForm branchId={branch} kind="inventory" items={[]} />
+              <RecordForm
+                branchId={branch}
+                kind="inventory"
+                items={[]}
+                kurs={data.kurs}
+              />
             )}
             <SearchForm
               branchId={branch}
@@ -278,24 +291,51 @@ export default async function ERP({
             <table>
               <thead>
                 <tr>
-                  <th>Model</th>
+                  <th>Qurilma</th>
                   <th>IMEI</th>
                   <th>Tannarx</th>
+                  <th>Prognoz narx</th>
                   <th>Holat</th>
                 </tr>
               </thead>
               <tbody>
                 {items.map((i) => (
                   <tr key={i.id}>
-                    <td>{i.model}</td>
-                    <td>{i.imei}</td>
-                    <td>{money(i.cost)}</td>
+                    <td>
+                      {[i.brand, i.model, i.memory, i.color]
+                        .filter(Boolean)
+                        .join(" ")}
+                      {i.condition || i.battery ? (
+                        <small>
+                          {[
+                            i.condition,
+                            i.battery ? "batareyka " + i.battery + "%" : "",
+                          ]
+                            .filter(Boolean)
+                            .join(" • ")}
+                        </small>
+                      ) : null}
+                    </td>
+                    <td>
+                      {i.imei}
+                      {i.imei2 ? <small>{i.imei2}</small> : null}
+                    </td>
+                    <td>
+                      {money(i.cost)}
+                      {i.cost_usd_cents ? (
+                        <small>
+                          {cashMoney(i.cost_usd_cents, "cash_usd")} ×{" "}
+                          {money(i.cost_rate)}
+                        </small>
+                      ) : null}
+                    </td>
+                    <td>{i.expected_price ? money(i.expected_price) : "—"}</td>
                     <td>{i.status === "available" ? "Omborda" : "Sotilgan"}</td>
                   </tr>
                 ))}
                 {!items.length ? (
                   <tr>
-                    <td colSpan={4}>
+                    <td colSpan={5}>
                       Qurilma topilmadi. Qidiruv yoki holat filtrini
                       o‘zgartiring.
                     </td>

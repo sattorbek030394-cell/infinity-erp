@@ -3,6 +3,7 @@ import assert from "node:assert/strict";
 import {
   contractSchema,
   paymentSchema,
+  itemSchema,
   nasiyaTotals,
   schedule,
   yopishHisobi,
@@ -275,4 +276,76 @@ test("yopish hisobi noto'g'ri ma'lumotni rad etadi", () => {
     { principal: 100, markup: 10, rateBp: 500, periods: -1, debt: 100 },
   ])
     assert.throws(() => yopishHisobi(v), JSON.stringify(v));
+});
+
+test("Kirim: IMEI o'rniga seriya raqami ham qabul qilinadi", () => {
+  const asos = { model: "Iphone 17 Pro", cost: 10_000_000 };
+  for (const imei of [
+    "353840106026083",
+    "J4RMVWVXVV",
+    "15-fd0366nia",
+    "353840106026083/1",
+  ])
+    assert.equal(
+      itemSchema.safeParse({ ...asos, imei }).success,
+      true,
+      imei,
+    );
+  for (const imei of ["123", "", "a b c d e", "x".repeat(33), "-abcde"])
+    assert.equal(
+      itemSchema.safeParse({ ...asos, imei }).success,
+      false,
+      JSON.stringify(imei),
+    );
+});
+
+test("Kirim: tannarx so'mda yoki dollar va kurs bilan", () => {
+  const asos = { imei: "353840106026083", model: "Iphone 17 Pro" };
+  assert.equal(itemSchema.safeParse(asos).success, false, "tannarx yo'q");
+  assert.equal(
+    itemSchema.safeParse({ ...asos, costUsd: "850" }).success,
+    false,
+    "kurs yo'q",
+  );
+  const v = itemSchema.parse({
+    ...asos,
+    brand: "Iphone",
+    memory: "256",
+    simType: "sim+esim",
+    color: "silver",
+    condition: "Yangi",
+    battery: "100",
+    costUsd: "850.50",
+    costRate: "12800",
+    expectedPrice: "12000000",
+    supplier: "Bahodir aka",
+    receivedBy: "Jamoliddin",
+    purchaseMethod: "cash_usd",
+    purchaseDate: "2026-10-11",
+  });
+  assert.equal(v.battery, 100);
+  assert.equal(v.costUsd, "850.50");
+  assert.equal(v.costRate, 12_800);
+  assert.equal(v.purchaseMethod, "cash_usd");
+  // Bo'sh qoldirilgan maydonlar xato bermaydi.
+  assert.equal(
+    itemSchema.safeParse({
+      ...asos,
+      cost: 10_000_000,
+      brand: "",
+      memory: "",
+      battery: "",
+      purchaseDate: "",
+      purchaseMethod: "",
+      supplier: "",
+    }).success,
+    true,
+  );
+  // Noto'g'ri batareyka va to'lov turi o'tmaydi.
+  for (const bad of [{ battery: "101" }, { battery: "-1" }, { purchaseMethod: "naqd" }])
+    assert.equal(
+      itemSchema.safeParse({ ...asos, cost: 1_000_000, ...bad }).success,
+      false,
+      JSON.stringify(bad),
+    );
 });
