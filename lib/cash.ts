@@ -17,6 +17,40 @@ type Scope = {
   role: string;
 };
 export class CashError extends Error {}
+
+/** Toshkent vaqti bo'yicha bugungi sana, YYYY-MM-DD. */
+export async function bugun(c: Pick<PoolClient, "query">) {
+  return (
+    await c.query(
+      "SELECT (now() AT TIME ZONE 'Asia/Tashkent')::date::text today",
+    )
+  ).rows[0].today as string;
+}
+/**
+ * Yopilgan kunga yozuv kirmaydi (CASH-04).
+ *
+ * Nasiya to'lovi, xarid, qarz to'lovi va qo'lda kiritilgan harakat -
+ * hammasi shu tekshiruvdan o'tadi. Qayta ochilgan kun yana ochiq.
+ */
+export async function assertOpenDay(
+  c: Pick<PoolClient, "query">,
+  s: Scope,
+  day: string,
+) {
+  const yopilgan = (
+    await c.query(
+      `SELECT day::text FROM cash_closings
+ WHERE tenant_id=$1 AND branch_id=$2 AND reopened_at IS NULL AND day>=$3::date
+ ORDER BY day LIMIT 1`,
+      [s.tenant_id, s.branch_id, day],
+    )
+  ).rows[0];
+  if (yopilgan)
+    throw new CashError(
+      `${yopilgan.day} kuni kassa yopilgan: bu sanaga yozuv kiritilmaydi. Rahbar kunni qayta ochishi kerak.`,
+    );
+}
+
 /** Filialning to'rt hamyoni mavjud bo'lsin: ularga FK bog'lanishlar bor. */
 export async function wallets(c: Pick<PoolClient, "query">, s: Scope) {
   await c.query(
@@ -39,6 +73,7 @@ export async function postPurchase(
 ) {
   if (!walletMinor) return;
   await wallets(c, s);
+  await assertOpenDay(c, s, await bugun(c));
   await c.query(
     `INSERT INTO cash_entries(id,tenant_id,branch_id,wallet,entry_date,amount_minor,category,user_id,inventory_id)
  VALUES($1,$2,$3,$4,(now() AT TIME ZONE 'Asia/Tashkent')::date,$5,'Telefon xaridi',$6,$7)`,
@@ -63,6 +98,7 @@ export async function postSettlement(
   wallet: Wallet,
 ) {
   await wallets(c, s);
+  await assertOpenDay(c, s, await bugun(c));
   await c.query(
     `INSERT INTO cash_entries(id,tenant_id,branch_id,wallet,entry_date,amount_minor,category,user_id,settlement_id)
  VALUES($1,$2,$3,$4,(now() AT TIME ZONE 'Asia/Tashkent')::date,$5,'Yetkazib beruvchiga qarz to‘lovi',$6,$7)`,
@@ -90,6 +126,7 @@ export async function postCashReceipt(
   // hamyoniga so'm tushadi (tushumMinor).
   if (!amount) return;
   await wallets(c, s);
+  await assertOpenDay(c, s, await bugun(c));
   await c.query(
     `INSERT INTO cash_entries(id,tenant_id,branch_id,wallet,entry_date,amount_minor,category,user_id,${kind === "payment" ? "payment_id" : "contract_id"}) VALUES($1,$2,$3,$4,(now() AT TIME ZONE 'Asia/Tashkent')::date,$5,$6,$7,$8)`,
     [
@@ -132,6 +169,7 @@ export async function mutateCash(raw: unknown) {
       )
     ).rows[0].today;
     if (v.date > today) throw new CashError("Kelajak sanasini kiritmang");
+    if (v.action !== "opening") await assertOpenDay(c, s, v.date);
     if (
       v.action === "transfer" &&
       (v.wallet === v.destination ||
@@ -241,7 +279,22 @@ export async function readCash(branchId: string, requestedPage: number) {
       [s.tenant_id, s.branch_id, (page - 1) * 20],
     )
   ).rows;
-  return { balances, entries, today, total, page, pages };
+  // Shu oyning chiqimlari kategoriya bo'yicha. Valyutalar qo'shilmaydi:
+  // so'm va dollar alohida ustun (TZ 4.4).
+  const expenses = (
+    await db.query(
+      `SELECT category,
+ COALESCE(sum(CASE WHEN wallet<>'cash_usd' THEN -amount_minor END),0)::text uzs,
+ COALESCE(sum(CASE WHEN wallet='cash_usd' THEN -amount_minor END),0)::text usd
+ FROM cash_entries
+ WHERE tenant_id=$1 AND branch_id=$2 AND amount_minor<0
+ AND entry_date>=date_trunc('month',$3::date)::date AND entry_date<=$3::date
+ AND category<>'Hamyonlar orasida o‘tkazma'
+ GROUP BY category ORDER BY 2 DESC,category`,
+      [s.tenant_id, s.branch_id, today],
+    )
+  ).rows;
+  return { balances, entries, today, total, page, pages, expenses };
 }
 export async function reverseCash(raw: unknown) {
   const v = cashVoidSchema.parse(raw),
@@ -258,6 +311,7 @@ export async function reverseCash(raw: unknown) {
       )
     ).rows[0]?.role;
     if (!can(role, "cash.reverse")) throw new AccessDeniedError();
+    await assertOpenDay(c, s, await bugun(c));
     const hash = createHash("sha256")
       .update(JSON.stringify({ action: "reverse", ...v }))
       .digest("hex");

@@ -2961,3 +2961,163 @@ test(
     assert.ok(html.includes("Jami qarzimiz"));
   },
 );
+
+test(
+  "HTTP: kun yopish va chiqimlar hisoboti (CASH-04)",
+  { skip: !connection },
+  async () => {
+    const auth = await login(admin + "@example.invalid");
+    const kassirAuth = await login(kassir + "@example.invalid");
+    const bugun = (
+      await pool.query(
+        "SELECT (now() AT TIME ZONE 'Asia/Tashkent')::date::text d",
+      )
+    ).rows[0].d;
+    const yopish = (body: Record<string, unknown>, cookie = auth) =>
+      fetch(origin + "/api/cash/close", {
+        method: "POST",
+        headers: { cookie, origin, "content-type": "application/json" },
+        body: JSON.stringify({ branchId: b2, day: bugun, ...body }),
+      });
+    const sanalgan = {
+      cash_uzs: "0",
+      cash_usd: "0",
+      card_uzs: "0",
+      bank_uzs: "0",
+    };
+    // Boshlang'ich qoldiq belgilanmagan hamyon bilan kun yopilmaydi.
+    const bosh = await yopish({ counted: sanalgan });
+    assert.equal(bosh.status, 400);
+    assert.ok((await bosh.json()).error.includes("boshlang‘ich"));
+    // Boshlang'ich qoldiqni admin belgilaydi.
+    for (const [wallet, amount] of [
+      ["cash_uzs", "1000000"],
+      ["cash_usd", "100.00"],
+      ["card_uzs", "0"],
+      ["bank_uzs", "0"],
+    ])
+      assert.equal(
+        (
+          await fetch(origin + "/api/cash", {
+            method: "POST",
+            headers: { cookie: auth, origin, "content-type": "application/json" },
+            body: JSON.stringify({
+              branchId: b2,
+              requestKey: randomUUID(),
+              action: "opening",
+              wallet,
+              date: bugun,
+              amount,
+            }),
+          })
+        ).status,
+        200,
+        wallet,
+      );
+    // Xarajat yozamiz: ijara 300 000 so'm.
+    assert.equal(
+      (
+        await fetch(origin + "/api/cash", {
+          method: "POST",
+          headers: { cookie: auth, origin, "content-type": "application/json" },
+          body: JSON.stringify({
+            branchId: b2,
+            requestKey: randomUUID(),
+            action: "entry",
+            wallet: "cash_uzs",
+            date: bugun,
+            amount: "300000",
+            direction: "out",
+            category: "Ijara",
+            note: "SYNTHETIC ijara",
+          }),
+        })
+      ).status,
+      200,
+    );
+    // Kassir kunni yopadi: 700 000 qoldiq kutiladi, 690 000 sanaldi.
+    const yopildi = await yopish(
+      {
+        counted: { ...sanalgan, cash_uzs: "690000", cash_usd: "100.00" },
+        note: "SYNTHETIC kun yopish",
+      },
+      kassirAuth,
+    );
+    assert.equal(yopildi.status, 200);
+    const satr = (
+      await pool.query(
+        `SELECT l.wallet,l.computed_minor,l.counted_minor FROM cash_closing_lines l
+ JOIN cash_closings x ON x.id=l.closing_id WHERE x.branch_id=$1 AND x.day=$2::date
+ ORDER BY l.wallet`,
+        [b2, bugun],
+      )
+    ).rows;
+    const naqd = satr.find((r) => r.wallet === "cash_uzs");
+    assert.equal(Number(naqd.computed_minor), 700_000);
+    assert.equal(Number(naqd.counted_minor), 690_000);
+    assert.equal(
+      Number(satr.find((r) => r.wallet === "cash_usd").computed_minor),
+      10_000,
+      "USD sentda hisoblanadi",
+    );
+    // Ikkinchi marta yopib bo'lmaydi.
+    assert.equal((await yopish({ counted: sanalgan })).status, 400);
+    // Yopilgan kunga yangi yozuv kirmaydi.
+    const kech = await fetch(origin + "/api/cash", {
+      method: "POST",
+      headers: { cookie: auth, origin, "content-type": "application/json" },
+      body: JSON.stringify({
+        branchId: b2,
+        requestKey: randomUUID(),
+        action: "entry",
+        wallet: "cash_uzs",
+        date: bugun,
+        amount: "50000",
+        direction: "out",
+        category: "Transport",
+      }),
+    });
+    assert.equal(kech.status, 400);
+    assert.ok((await kech.json()).error.includes("yopilgan"));
+    // Kassir qayta ocholmaydi, rahbar ochadi - sabab majburiy.
+    assert.equal(
+      (await yopish({ action: "reopen", reason: "Sanoqda xato" }, kassirAuth))
+        .status,
+      403,
+    );
+    assert.equal((await yopish({ action: "reopen", reason: "xato" })).status, 400);
+    assert.equal(
+      (await yopish({ action: "reopen", reason: "Sanoqda xato bo‘ldi" })).status,
+      200,
+    );
+    // Qayta ochilgandan keyin yozuv o'tadi.
+    assert.equal(
+      (
+        await fetch(origin + "/api/cash", {
+          method: "POST",
+          headers: { cookie: auth, origin, "content-type": "application/json" },
+          body: JSON.stringify({
+            branchId: b2,
+            requestKey: randomUUID(),
+            action: "entry",
+            wallet: "cash_uzs",
+            date: bugun,
+            amount: "50000",
+            direction: "out",
+            category: "Transport",
+          }),
+        })
+      ).status,
+      200,
+    );
+    // Chiqimlar hisoboti kategoriya bo'yicha ko'rinadi.
+    const html = await (
+      await fetch(origin + "/erp?branch=" + b2 + "&tab=cash", {
+        headers: { cookie: auth },
+      })
+    ).text();
+    assert.ok(html.includes("Shu oyning chiqimlari"));
+    assert.ok(html.includes("Ijara"));
+    assert.ok(html.includes("Sanoqda xato bo‘ldi"), "qayta ochish sababi tarixda");
+  },
+);

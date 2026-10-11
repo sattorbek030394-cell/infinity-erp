@@ -18,6 +18,8 @@ import { readArrears } from "../../lib/arrears";
 import { ArrearsList } from "./arrears-list";
 import { readCash } from "../../lib/cash";
 import { CashPanel } from "./cash-panel";
+import { readClosings } from "../../lib/cash-closing";
+import { ClosingPanel } from "./closing-panel";
 import { readSales } from "../../lib/sales";
 import { SalesPanel } from "./sales-panel";
 import { readPending } from "../../lib/payment-approval";
@@ -88,6 +90,7 @@ export default async function ERP({
   const data = await readBranch(branch);
   const arrears = tab === "arrears" ? await readArrears(branch) : null;
   const cash = tab === "cash" ? await readCash(branch, filters.page) : null;
+  const closings = tab === "cash" ? await readClosings(branch) : null;
   const sales = tab === "sales" ? await readSales(branch, filters) : null;
   const pending = tab === "approvals" ? await readPending(branch) : null;
   const closures = tab === "closures" ? await readClosures(branch) : null;
@@ -193,7 +196,17 @@ export default async function ERP({
           />
         ) : null}
         {cash ? (
-          <CashPanel report={cash} branch={branch} role={data.role} />
+          <>
+            <CashPanel report={cash} branch={branch} role={data.role} />
+            {closings ? (
+              <ClosingPanel
+                branchId={branch}
+                report={closings}
+                today={cash.today}
+                balances={cash.balances}
+              />
+            ) : null}
+          </>
         ) : null}
         {sales ? (
           <SalesPanel

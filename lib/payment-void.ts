@@ -3,6 +3,7 @@ import { z } from "zod";
 import { scope, AccessDeniedError } from "./auth";
 import { transaction } from "./db";
 import { can } from "./domain";
+import { assertOpenDay } from "./cash";
 import { tushumMinor } from "./cash-domain";
 export const paymentVoidSchema = z
   .object({
@@ -66,6 +67,8 @@ export async function voidPayment(raw: unknown) {
     }
     if (payment.voided_at)
       throw new PaymentVoidError("To‘lov avval bekor qilingan");
+    // Bekor qilish yozuvi asl sanaga tushadi: o'sha kun yopilgan bo'lsa
+    // avval rahbar kunni qayta ochishi kerak (CASH-04).
     const receipt = (
       await c.query(
         "SELECT * FROM cash_entries WHERE tenant_id=$1 AND branch_id=$2 AND payment_id=$3 FOR UPDATE",
@@ -85,6 +88,11 @@ export async function voidPayment(raw: unknown) {
       ).rowCount
     )
       throw new PaymentVoidError("Kassa yozuvi mos emas");
+    try {
+      await assertOpenDay(c, s, String(receipt.entry_date).slice(0, 10));
+    } catch (e) {
+      throw new PaymentVoidError((e as Error).message);
+    }
     await c.query("INSERT INTO cash_operations VALUES($1,$2,$3,$4)", [
       v.requestKey,
       s.tenant_id,
