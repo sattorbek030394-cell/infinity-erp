@@ -1,5 +1,6 @@
 import { dateTime, methodNames, money } from "../../lib/filters";
 import type { readPaymentHistory } from "../../lib/history";
+import { PaymentVoid } from "./payment-void";
 type History = Awaited<ReturnType<typeof readPaymentHistory>>;
 export function PaymentHistory({
   history,
@@ -46,10 +47,25 @@ export function PaymentHistory({
                   {p.model} • {p.imei}
                 </small>
               </td>
-              <td>{money(p.amount)}</td>
+              <td>
+                {money(p.amount)}
+                {p.voided_at ? (
+                  <small>Bekor qilingan • hisobga kirmaydi</small>
+                ) : null}
+              </td>
               <td>{methodNames[p.method] ?? p.method}</td>
               <td>
                 <code>{p.id}</code>
+                {p.voided_at ? (
+                  <>
+                    <small>Sabab: {p.void_reason}</small>
+                    <small>Bekor qilingan vaqt: {dateTime(p.voided_at)}</small>
+                  </>
+                ) : history.role === "admin" && p.cash_linked ? (
+                  <PaymentVoid branchId={branchId} paymentId={p.id} />
+                ) : !p.cash_linked ? (
+                  <small>Eski yozuv: Kassa bog‘lanishi yo‘q</small>
+                ) : null}
               </td>
             </tr>
           ))}

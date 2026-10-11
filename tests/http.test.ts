@@ -110,9 +110,9 @@ after(async () => {
     for (const table of [
       "audit_events",
       "cash_entries",
+      "payments",
       "cash_operations",
       "cash_wallets",
-      "payments",
       "installments",
       "contracts",
       "inventory",
@@ -822,6 +822,182 @@ test(
         "To‘lov topilmadi",
       ),
     );
+    // Corrections must update debt and the linked cash receipt together.
+    const correctionItemResponse = await post("inventory", {
+      ...input,
+      imei: "777777777777777",
+    });
+    assert.equal(correctionItemResponse.status, 200);
+    const correctionContractResponse = await post("contracts", {
+      ...terms,
+      inventoryId: (await correctionItemResponse.json()).id,
+      customerLabel: "SYNTHETIC CORRECTION",
+      total: 1000000,
+      downPayment: 0,
+      months: 2,
+    });
+    assert.equal(correctionContractResponse.status, 200);
+    const correctionContract = (await correctionContractResponse.json()).id;
+    const payCorrection = async (amount: number, method = "card") =>
+      post("payments", {
+        contractId: correctionContract,
+        amount,
+        method,
+        requestKey: randomUUID(),
+      });
+    const firstResponse = await payCorrection(200000),
+      secondResponse = await payCorrection(300000);
+    assert.equal(firstResponse.status, 200);
+    assert.equal(secondResponse.status, 200);
+    const correctionFirst = (await firstResponse.json()).id,
+      correctionSecond = (await secondResponse.json()).id;
+    const voidPay = async (
+      data: Record<string, unknown>,
+      auth = cookie,
+      source = origin,
+    ) =>
+      fetch(origin + "/api/payments/void", {
+        method: "POST",
+        headers: {
+          cookie: auth,
+          origin: source,
+          "content-type": "application/json",
+        },
+        body: JSON.stringify({
+          branchId: b1,
+          paymentId: correctionFirst,
+          requestKey: randomUUID(),
+          reason: "Sun’iy xato summa",
+          ...data,
+        }),
+      });
+    for (const auth of ["", viewerCookie, outsiderCookie])
+      assert.equal((await voidPay({}, auth)).status, 403);
+    assert.equal((await voidPay({ branchId: b2 })).status, 400);
+    assert.equal(
+      (await voidPay({}, cookie, "https://evil.invalid")).status,
+      400,
+    );
+    assert.equal((await voidPay({ reason: " " })).status, 400);
+    assert.equal((await voidPay({ tenantId: tenant })).status, 400);
+    const legacyPayment = (
+      await pool.query(
+        "SELECT p.id FROM payments p WHERE p.contract_id=$1 AND NOT EXISTS(SELECT 1 FROM cash_entries e WHERE e.payment_id=p.id) LIMIT 1",
+        [contract],
+      )
+    ).rows[0].id;
+    assert.equal(
+      (await voidPay({ paymentId: legacyPayment })).status,
+      400,
+      "legacy missing cash link is not silently corrected",
+    );
+    const correctionKey = randomUUID();
+    const corrected = await Promise.all([
+      voidPay({ requestKey: correctionKey }),
+      voidPay({ requestKey: correctionKey }),
+    ]);
+    assert.deepEqual(
+      corrected.map((r) => r.status),
+      [200, 200],
+    );
+    assert.equal(
+      (await voidPay({ requestKey: correctionKey, reason: "Different reason" }))
+        .status,
+      400,
+    );
+    assert.equal((await voidPay({})).status, 400);
+    const activePaid = async () =>
+      Number(
+        (
+          await pool.query(
+            "SELECT coalesce(sum(amount),0) paid FROM payments WHERE contract_id=$1 AND voided_at IS NULL",
+            [correctionContract],
+          )
+        ).rows[0].paid,
+      );
+    assert.equal(await activePaid(), 300000);
+    const sourceEntry = (
+      await pool.query("SELECT id FROM cash_entries WHERE payment_id=$1", [
+        correctionFirst,
+      ])
+    ).rows[0].id;
+    assert.equal(
+      Number(
+        (
+          await pool.query(
+            "SELECT sum(amount_minor) n FROM cash_entries WHERE id=$1 OR reversal_of=$1",
+            [sourceEntry],
+          )
+        ).rows[0].n,
+      ),
+      0,
+    );
+    const correctionDetail =
+      "/erp/contracts/" + correctionContract + "?branch=" + b1;
+    assert.ok((await get(correctionDetail)).includes("Bekor qilingan"));
+    assert.ok(
+      !(await get(correctionDetail, viewerCookie)).includes(
+        "To‘lovni bekor qilish",
+      ),
+    );
+    const correctedArrears = await get(
+      base + "&tab=arrears&status=all&q=SYNTHETIC%20CORRECTION",
+    );
+    assert.ok(correctedArrears.includes("SYNTHETIC CORRECTION"));
+    const correctionExport = await fetch(origin + "/api/export?branch=" + b1, {
+      headers: { cookie },
+    });
+    assert.equal(correctionExport.status, 200);
+    const correctionBytes = Buffer.from(await correctionExport.arrayBuffer());
+    assert.ok(correctionBytes.includes(Buffer.from("Sun’iy xato summa")));
+    const reportRows =
+      correctionBytes.toString().match(/<row r="\d+">[\s\S]*?<\/row>/g) ?? [];
+    const correctionRows = reportRows.filter(
+      (row) =>
+        row.includes(correctionContract) &&
+        row.includes("SYNTHETIC CORRECTION"),
+    );
+    assert.ok(
+      correctionRows.some((row) =>
+        /<c r="H\d+" s="2" t="n"><v>700000<\/v>/.test(row),
+      ),
+      "Nasiya export uses active payments only",
+    );
+    assert.ok(
+      correctionRows.some((row) =>
+        /<c r="F\d+" s="2" t="n"><v>700000<\/v>/.test(row),
+      ),
+      "arrears export recomputes overdue after cancellation",
+    );
+    assert.ok(
+      correctionBytes.includes(
+        Buffer.from("Bekor qilingan — hisobga kirmaydi"),
+      ),
+    );
+    const simultaneous = await Promise.all([
+      voidPay({ paymentId: correctionSecond }),
+      payCorrection(700000, "cash"),
+    ]);
+    assert.deepEqual(
+      simultaneous.map((r) => r.status),
+      [200, 200],
+    );
+    assert.equal(
+      await activePaid(),
+      700000,
+      "contract row lock serializes repayment and cancellation",
+    );
+    assert.equal((await payCorrection(300001)).status, 400);
+    const settled = await payCorrection(300000);
+    assert.equal(settled.status, 200);
+    assert.equal(await activePaid(), 1000000);
+    const settledPayment = (await settled.json()).id;
+    const doubleVoid = await Promise.all([
+      voidPay({ paymentId: settledPayment }),
+      voidPay({ paymentId: settledPayment }),
+    ]);
+    assert.deepEqual(doubleVoid.map((r) => r.status).sort(), [200, 400]);
+    assert.equal(await activePaid(), 700000);
     const settings = async (
       data: Record<string, unknown>,
       auth = cookie,
@@ -930,6 +1106,11 @@ test(
     const staff = (await created.json()).id;
     extraUsers.push(staff);
     const staffCookie = await login(staffEmail);
+    assert.equal(
+      (await voidPay({ paymentId: correctionSecond }, staffCookie)).status,
+      403,
+      "cashier cannot cancel payments",
+    );
     assert.equal(
       (
         await cash(

@@ -9,6 +9,13 @@ test("arrears: exact due-day boundary, oldest-first partial payments, prepayment
     "00000000-0000-4000-8000-" + String(n).padStart(12, "0");
   try {
     await db.exec(await readFile("db/001_init.sql", "utf8"));
+    for (const file of [
+      "002_disabled_memberships.sql",
+      "003_cash.sql",
+      "004_cash_reversals.sql",
+      "005_payment_voids.sql",
+    ])
+      await db.exec(await readFile("db/" + file, "utf8"));
     await db.query("INSERT INTO tenants VALUES($1,'synthetic'),($2,'other')", [
       id(1),
       id(9),

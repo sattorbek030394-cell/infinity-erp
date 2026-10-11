@@ -119,8 +119,18 @@ Yangilaganda `npm run migrate` bajaring: `003_cash.sql` kassa jadvallarini yarat
 
 `004_cash_reversals.sql` migratsiyasini qo‘llang. Administrator Kassa daftarida qo‘lda yozilgan asl harakatni ochib, **Bekor qilish** orqali kamida 5 belgili sabab yozadi. Asl yozuv o‘chmaydi; asl sanaga qarama-qarshi summa yoziladi, muallif va bajarilgan vaqt saqlanadi. Bu yangi pul harakati emas, tarixiy xatoni tuzatishdir. Hamyonlar orasidagi o‘tkazmaning ikkala tomoni birga bekor qilinadi. Bekor qilingan yozuv belgilanadi; uni yoki bekor qilish yozuvini yana bekor qilish bloklanadi.
 
-Kassir va kuzatuvchi bekor qila olmaydi. Boshlang‘ich qoldiq va avtomatik nasiya tushumi bu usul bilan bekor qilinmaydi; nasiya uchun bog‘langan qarz/to‘lovni tuzatish jarayoni hali mavjud emas.
+Kassir va kuzatuvchi bekor qila olmaydi. Boshlang‘ich qoldiq va avtomatik nasiya tushumi Kassa daftaridan alohida bekor qilinmaydi. Keyingi nasiya to‘lovi quyidagi bog‘langan tuzatish jarayoni orqali bekor qilinadi.
 
 POST /api/cash/reverse — branchId, entryId, requestKey, reason. Sessiya, Origin va shu filial administratorining ruxsati talab qilinadi. Bir xil kalitli takroriy so‘rov bir marta bajariladi; boshqa kalit bilan ikkinchi bekor qilish rad etiladi. 200 {id}, 400 validatsiya yoki 403 ruxsat xatosi.
+
+## Xato nasiya to‘lovini tuzatish
+
+Yangilaganda `npm run migrate` bajaring (`005_payment_voids.sql`). Administrator **To‘lovlar** ekranida yoki shartnomaning **To‘lov tarixi**da xato to‘lov yonidagi **To‘lovni bekor qilish**ni ochadi, kamida 5 belgili sabab yozadi va tekshirganini belgilaydi. So‘ng to‘g‘ri summa/usulni yangi to‘lov sifatida kiriting. Eski yozuv tahrirlanmaydi yoki o‘chirilmaydi.
+
+Bekor qilish bir tranzaksiyada bajariladi: to‘lov bekor qilingan deb belgilanadi, mijozning qarzi shu summaga oshadi va bog‘langan Kassa tushumiga asl sanada qarama-qarshi yozuv qo‘shiladi. Dashboard, shartnoma qoldig‘i, qarzdorlar, keyingi to‘lov limiti va Excel hisoblari faqat faol to‘lovlarni hisoblaydi. Tarix va eksportda asl to‘lov, sabab, bekor qilish vaqti va muallifi saqlanadi. Parallel qayta yuborish yoki bir vaqtning o‘zida yangi to‘lov kiritish shartnoma blokirovkasi bilan tartiblanadi; ikki marta bekor qilish rad etiladi.
+
+Bu tarixiy xato yozuvni tuzatish, haqiqiy pulni mijozga qaytarish emas. Kassir va kuzatuvchi bekor qila olmaydi. Boshlang‘ich to‘lovni/shartnomani bekor qilish, bekor qilishni qayta tiklash va Kassa yozuvi bo‘lmagan eski to‘lovlarni tuzatish mavjud emas. Eski yozuvda Kassa bog‘lanishi yo‘qligi ko‘rsatiladi va API tuzatishni rad qiladi; tasdiqlanmagan pul harakati yaratilmaydi.
+
+POST /api/payments/void — JSON branchId, paymentId, requestKey, reason. Sessiya, Origin va filial administratori talab qilinadi; tenant serverdan olinadi. 200 {id}, 400 validatsiya/bog‘lanish/takroriy tuzatish xatosi, 403 ruxsat xatosi. Bir xil kalit va bir xil qiymatli qayta yuborish bir marta bajariladi.
 
 POST /api/cash — branchId, requestKey, action (opening/entry/transfer), wallet, date, amount (matn), actionga tegishli direction/category/note yoki destination. Tenant serverdan olinadi; Origin va filial ruxsati tekshiriladi. Opening faqat administrator uchun. 200 {id}, 400 validatsiya yoki 403 ruxsat xatosi.

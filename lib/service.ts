@@ -91,7 +91,7 @@ async function writeRecord(
       return p.id;
     }
     const sum = await c.query(
-      "SELECT COALESCE(sum(amount),0) paid FROM payments WHERE contract_id=$1",
+      "SELECT COALESCE(sum(amount),0) paid FROM payments WHERE contract_id=$1 AND voided_at IS NULL",
       [v.contractId],
     );
     assertPayment(
@@ -128,7 +128,7 @@ export async function readBranch(branchId: string) {
     args,
   );
   const contracts = await db.query(
-    "SELECT c.*, i.model,i.imei,c.total-c.down_payment-COALESCE((SELECT sum(p.amount) FROM payments p WHERE p.contract_id=c.id),0) balance FROM contracts c JOIN inventory i ON i.id=c.inventory_id AND i.tenant_id=c.tenant_id AND i.branch_id=c.branch_id WHERE c.tenant_id=$1 AND c.branch_id=$2 ORDER BY start_date DESC,c.id",
+    "SELECT c.*, i.model,i.imei,c.total-c.down_payment-COALESCE((SELECT sum(p.amount) FROM payments p WHERE p.contract_id=c.id AND p.voided_at IS NULL),0) balance FROM contracts c JOIN inventory i ON i.id=c.inventory_id AND i.tenant_id=c.tenant_id AND i.branch_id=c.branch_id WHERE c.tenant_id=$1 AND c.branch_id=$2 ORDER BY start_date DESC,c.id",
     args,
   );
   return {
