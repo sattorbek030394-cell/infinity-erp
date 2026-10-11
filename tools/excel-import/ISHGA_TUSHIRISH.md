@@ -232,10 +232,24 @@ Kassir tasdiqlaganda kassaga tushadi.
 **5% zaxira** ko'rsatkichi. Zaxira — portfeldan kutilayotgan qaytmaydigan
 qarz; hisob yozuvi emas, ogohlantirish. Kechikish uchun **jarima yo'q**.
 
+### Kirim (ombor)
+
+Kirim formasida Excel'dagi barcha maydonlar bor: brend, model, xotira, SIM
+turi, rang, region, holat (Yangi / B/U / Trade-in), batareyka foizi, ikkinchi
+IMEI, kirim sanasi, yetkazib beruvchi, qabul qiluvchi va to'lov turi.
+
+Tannarxni **dollarda** kiriting va kirim kursini yozing — so'mdagi qiymat
+darhol ko'rinadi va ikkisi ham saqlanadi (foyda hisobi kirim kursiga
+tayanadi). Faqat so'mda ishlaydigan tovar uchun "tannarx UZS" maydoni bor.
+
+IMEI endi 15 raqam bo'lishi shart emas: Apple seriya raqami (J4RMVWVXVV)
+va noutbuk modeli (15-fd0366nia) ham o'tadi.
+
+To'lov turi hozircha faqat qayd etiladi — kassadan pul chiqishi va yetkazib
+beruvchi qarzi keyingi paketda ulanadi.
+
 Hali yo'q:
 
-- **Kirim (ombor) maydonlari formada.** Brend, xotira, rang, holat, batareya,
-  yetkazib beruvchi — bazada bor, ekranda hali yo'q.
 - **Aksessuar va xizmat sotuvi** (chexol, oyna, remont) — model hozircha
   faqat IMEI'li qurilmani biladi.
 - **Kafil, minimal sotuv narxi va sotuvchi bonusi** — qaror kutilmoqda.
