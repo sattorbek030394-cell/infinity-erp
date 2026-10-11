@@ -10,6 +10,8 @@ import {
 } from "../../../../lib/filters";
 import { RecordForm } from "../../record-form";
 import { can } from "../../../../lib/domain";
+import { readClosure } from "../../../../lib/closure";
+import { ClosurePanel } from "../../closure-panel";
 import { PaymentHistory } from "../../payment-history";
 export const dynamic = "force-dynamic";
 export default async function ContractPage({
@@ -43,6 +45,7 @@ export default async function ContractPage({
     to: "",
   };
   const history = await readPaymentHistory(branch, filters, id);
+  const closure = await readClosure(branch, id);
   return (
     <>
       <header>
@@ -166,6 +169,14 @@ export default async function ContractPage({
               ]}
             />
           </>
+        ) : null}
+        {closure.canClose && (Number(c.balance) > 0 || closure.done) ? (
+          <ClosurePanel
+            branchId={branch}
+            contractId={id}
+            quote={closure.quote}
+            done={closure.done}
+          />
         ) : null}
         <h2>To‘lov tarixi</h2>
         <PaymentHistory

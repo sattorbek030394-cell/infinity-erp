@@ -106,6 +106,20 @@ export async function voidPayment(raw: unknown) {
         receipt.id,
       ],
     );
+    // AT-32: yopilgan shartnomaning to'lovi qaytarilsa, bog'langan yopish
+    // tuzatishi ham teskari qilinadi - bekor qilingan ustama qarzga
+    // qaytadi va shartnoma yana ochiq bo'ladi.
+    const yopish = (
+      await c.query(
+        "SELECT id FROM contract_closures WHERE contract_id=$1 AND status='completed' FOR UPDATE",
+        [payment.contract_id],
+      )
+    ).rows[0];
+    if (yopish)
+      await c.query(
+        "UPDATE contract_closures SET status='reversed',decided_by=$2,decided_at=now(),note=$3 WHERE id=$1",
+        [yopish.id, s.userId, "To‘lov bekor qilindi"],
+      );
     // To'lov bilan birga shu to'lovdan chiqqan avans ham amaldan chiqadi.
     // Avans allaqachon ishlatilgan bo'lsa bekor qilish bloklanadi.
     const avans = (

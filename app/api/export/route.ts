@@ -1,6 +1,7 @@
 import { z } from "zod";
 import { scope, AccessDeniedError } from "../../../lib/auth";
 import { rollarAmal } from "../../../lib/domain";
+import { qarzSql } from "../../../lib/qarz-sql";
 import { transaction } from "../../../lib/db";
 import { arrearsQuery } from "../../../lib/arrears-query";
 import { exportWorkbook } from "../../../lib/export-workbook";
@@ -45,7 +46,7 @@ export async function GET(request: Request) {
       const contracts = (
         await c.query(
           `SELECT c.id,c.customer_label,i.model,i.imei,c.total,c.down_payment,c.months,c.start_date::text,
- COALESCE(p.paid,0) paid,c.total-c.down_payment-COALESCE(p.paid,0) balance
+ COALESCE(p.paid,0) paid,${qarzSql()} balance
  FROM contracts c JOIN inventory i ON i.id=c.inventory_id AND i.tenant_id=c.tenant_id AND i.branch_id=c.branch_id
  LEFT JOIN (SELECT contract_id,sum(amount) paid FROM payments WHERE tenant_id=$1 AND branch_id=$2 AND status='approved' AND voided_at IS NULL GROUP BY contract_id) p ON p.contract_id=c.id
  WHERE c.tenant_id=$1 AND c.branch_id=$2 ORDER BY c.start_date,c.id LIMIT 10001`,

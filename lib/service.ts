@@ -17,6 +17,7 @@ import type { PoolClient } from "pg";
 import { postCashReceipt } from "./cash";
 import { minorUnits, tushumMinor } from "./cash-domain";
 import { kunlikKurs } from "./kurs";
+import { qarzSql } from "./qarz-sql";
 type Scope = {
   tenant_id: string;
   branch_id: string;
@@ -213,14 +214,14 @@ async function writeRecord(
         throw new Error("Takroriy kalit mos emas");
       return p.id;
     }
-    const sum = await c.query(
-      "SELECT COALESCE(sum(amount),0) paid FROM payments WHERE contract_id=$1 AND status='approved' AND voided_at IS NULL",
-      [v.contractId],
+    const balance = Number(
+      (
+        await c.query(
+          `SELECT ${qarzSql()} balance FROM contracts c WHERE c.id=$1`,
+          [v.contractId],
+        )
+      ).rows[0].balance,
     );
-    const balance =
-      Number(contract.rows[0].total) -
-      Number(contract.rows[0].down_payment) -
-      Number(sum.rows[0].paid);
     if (balance <= 0) throw new Error("Bu shartnomada qarz qolmagan");
     // PAY-02: dollarda olingan to'lov to'lov kursi bilan so'mga
     // aylantiriladi; shartnoma kursi o'zgarmaydi.
@@ -291,7 +292,7 @@ export async function readBranch(branchId: string) {
     args,
   );
   const contracts = await db.query(
-    "SELECT c.*, i.model,i.imei,COALESCE((SELECT sum(a.amount-a.used_amount) FROM customer_advances a WHERE a.contract_id=c.id AND a.voided_at IS NULL),0) advance,c.total-c.down_payment-COALESCE((SELECT sum(p.amount) FROM payments p WHERE p.contract_id=c.id AND p.status='approved' AND p.voided_at IS NULL),0) balance FROM contracts c JOIN inventory i ON i.id=c.inventory_id AND i.tenant_id=c.tenant_id AND i.branch_id=c.branch_id WHERE c.tenant_id=$1 AND c.branch_id=$2 ORDER BY start_date DESC,c.id",
+    `SELECT c.*, i.model,i.imei,COALESCE((SELECT sum(a.amount-a.used_amount) FROM customer_advances a WHERE a.contract_id=c.id AND a.voided_at IS NULL),0) advance,${qarzSql()} balance FROM contracts c JOIN inventory i ON i.id=c.inventory_id AND i.tenant_id=c.tenant_id AND i.branch_id=c.branch_id WHERE c.tenant_id=$1 AND c.branch_id=$2 ORDER BY start_date DESC,c.id`,
     args,
   );
   return {

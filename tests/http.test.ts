@@ -2152,3 +2152,199 @@ test(
     );
   },
 );
+
+test(
+  "HTTP: PAY-07/08/09 muddatidan oldin yopish",
+  { skip: !connection },
+  async () => {
+    const auth = await login(admin + "@example.invalid");
+    const kassirAuth = await login(kassir + "@example.invalid");
+    // Shartnoma sanasi: bugundan 70 kun oldin - aynan 2 to'liq oy o'tadi.
+    const boshlanish = (
+      await pool.query(
+        "SELECT ((now() AT TIME ZONE 'Asia/Tashkent')::date - 70)::text d",
+      )
+    ).rows[0].d;
+    const item = (
+      await (
+        await post(
+          "inventory",
+          { imei: "466666666666666", model: "SYNTHETIC YOPISH", cost: 9_000_000 },
+          b1,
+          auth,
+        )
+      ).json()
+    ).id;
+    // TZ 11.1: D = 8 400 000, M = 2 520 000, oylik 1 820 000.
+    const contract = (
+      await (
+        await post(
+          "contracts",
+          {
+            inventoryId: item,
+            customerName: "SYNTHETIC YOPISH mijoz",
+            priceUzs: 12_000_000,
+            downPayment: 3_600_000,
+            months: 6,
+            monthlyRateBp: 500,
+            startDate: boshlanish,
+          },
+          b1,
+          auth,
+        )
+      ).json()
+    ).id;
+    const qarz = async () =>
+      Number(
+        (
+          await pool.query(
+            `SELECT c.total-c.down_payment
+ -COALESCE((SELECT sum(p.amount) FROM payments p WHERE p.contract_id=c.id AND p.status='approved' AND p.voided_at IS NULL),0)
+ -COALESCE((SELECT sum(x.markup_cancelled) FROM contract_closures x WHERE x.contract_id=c.id AND x.status='completed'),0) balance
+ FROM contracts c WHERE c.id=$1`,
+            [contract],
+          )
+        ).rows[0].balance,
+      );
+    const pay = (amount: number, method = "cash", cookie = auth) =>
+      post(
+        "payments",
+        { contractId: contract, amount, method, requestKey: randomUUID() },
+        b1,
+        cookie,
+      );
+    const yopish = (action: string, cookie = auth) =>
+      fetch(origin + "/api/closures", {
+        method: "POST",
+        headers: { cookie, origin, "content-type": "application/json" },
+        body: JSON.stringify({ branchId: b1, contractId: contract, action }),
+      });
+
+    assert.equal(await qarz(), 10_920_000);
+    for (let i = 0; i < 2; i++) assert.equal((await pay(1_820_000)).status, 200);
+    assert.equal(await qarz(), 7_280_000);
+
+    // AT-28: hisob - 1 680 000 ustama bekor, yopish summasi 5 600 000.
+    const hisob = await yopish("quote");
+    assert.equal(hisob.status, 200);
+    const h = await hisob.json();
+    assert.equal(h.kind, "early");
+    assert.equal(h.periods, 2);
+    assert.equal(h.markupCancelled, 1_680_000);
+    assert.equal(h.closeAmount, 5_600_000);
+    assert.equal(h.markupKept, 840_000);
+    // Hisobning o'zi qarzni o'zgartirmaydi.
+    assert.equal(await qarz(), 7_280_000);
+    // To'lamasdan yakunlab bo'lmaydi.
+    const erta = await yopish("complete");
+    assert.equal(erta.status, 400);
+    assert.ok((await erta.json()).error.includes("5 600 000"));
+
+    assert.equal((await pay(5_600_000)).status, 200);
+    assert.equal(await qarz(), 1_680_000);
+
+    // AT-29: tasdiq kutayotgan tushum bo'lsa yopilmaydi.
+    const kutayotgan = (
+      await (await pay(100_000, "card", kassirAuth)).json()
+    ).id;
+    const bloklangan = await yopish("complete");
+    assert.equal(bloklangan.status, 400);
+    assert.ok((await bloklangan.json()).error.includes("Tasdiq kutayotgan"));
+    assert.equal(
+      (
+        await fetch(origin + "/api/payments/approve", {
+          method: "POST",
+          headers: { cookie: auth, origin, "content-type": "application/json" },
+          body: JSON.stringify({
+            branchId: b1,
+            paymentId: kutayotgan,
+            decision: "reject",
+            reason: "Yopish hisobidan ortiqcha",
+          }),
+        })
+      ).status,
+      200,
+    );
+
+    // AT-30: barcha tasdiqlar bajarilgan - shartnoma yopiladi.
+    assert.equal((await yopish("complete")).status, 200);
+    assert.equal(await qarz(), 0, "qarz aynan nolga tushadi");
+    const yozuv = (
+      await pool.query(
+        "SELECT * FROM contract_closures WHERE contract_id=$1 AND status='completed'",
+        [contract],
+      )
+    ).rows[0];
+    assert.equal(yozuv.kind, "early");
+    assert.equal(Number(yozuv.markup_cancelled), 1_680_000);
+    assert.equal(Number(yozuv.close_amount), 5_600_000);
+    assert.equal(yozuv.decided_by, admin);
+    // Ikkinchi marta yopib bo'lmaydi.
+    assert.equal((await yopish("quote")).status, 400);
+    // Yopish tuzatishi kassaga kirim yaratmaydi.
+    assert.equal(
+      Number(
+        (
+          await pool.query(
+            "SELECT count(*) n FROM cash_entries WHERE branch_id=$1 AND category='Nasiya to‘lovi' AND payment_id IN (SELECT id FROM payments WHERE contract_id=$2)",
+            [b1, contract],
+          )
+        ).rows[0].n,
+      ),
+      3,
+      "faqat uchta haqiqiy to'lov kassada",
+    );
+
+    // PAY-09 hisoboti
+    const hisobot = await (
+      await fetch(origin + "/erp?branch=" + b1 + "&tab=closures", {
+        headers: { cookie: auth },
+      })
+    ).text();
+    assert.ok(hisobot.includes("SYNTHETIC YOPISH mijoz"));
+    assert.ok(hisobot.includes("1 680 000"));
+
+    // AT-32: yopish to'lovini qaytarish yopishni ham teskari qiladi.
+    const oxirgi = (
+      await pool.query(
+        "SELECT id FROM payments WHERE contract_id=$1 AND amount=5600000 AND voided_at IS NULL",
+        [contract],
+      )
+    ).rows[0].id;
+    assert.equal(
+      (
+        await fetch(origin + "/api/payments/void", {
+          method: "POST",
+          headers: { cookie: auth, origin, "content-type": "application/json" },
+          body: JSON.stringify({
+            branchId: b1,
+            paymentId: oxirgi,
+            requestKey: randomUUID(),
+            reason: "SYNTHETIC yopishni qaytarish",
+          }),
+        })
+      ).status,
+      200,
+    );
+    assert.equal(await qarz(), 7_280_000, "qarz va ustama qaytadi");
+    assert.equal(
+      (
+        await pool.query(
+          "SELECT status FROM contract_closures WHERE id=$1",
+          [yozuv.id],
+        )
+      ).rows[0].status,
+      "reversed",
+    );
+    assert.ok(
+      !(
+        await (
+          await fetch(origin + "/erp?branch=" + b1 + "&tab=closures", {
+            headers: { cookie: auth },
+          })
+        ).text()
+      ).includes("SYNTHETIC YOPISH mijoz"),
+      "teskari qilingan yopish hisobotdan chiqadi",
+    );
+  },
+);

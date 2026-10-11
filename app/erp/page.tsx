@@ -22,6 +22,8 @@ import { readSales } from "../../lib/sales";
 import { SalesPanel } from "./sales-panel";
 import { readPending } from "../../lib/payment-approval";
 import { ApprovalsPanel } from "./approvals-panel";
+import { readClosures } from "../../lib/closure";
+import { ClosuresPanel } from "./closures-panel";
 import { cashMoney } from "../../lib/cash-domain";
 export const dynamic = "force-dynamic";
 export default async function ERP({
@@ -67,6 +69,7 @@ export default async function ERP({
       "contracts",
       "payments",
       "approvals",
+      "closures",
       "arrears",
       "cash",
       "sales",
@@ -84,6 +87,7 @@ export default async function ERP({
   const cash = tab === "cash" ? await readCash(branch, filters.page) : null;
   const sales = tab === "sales" ? await readSales(branch, filters) : null;
   const pending = tab === "approvals" ? await readPending(branch) : null;
+  const closures = tab === "closures" ? await readClosures(branch) : null;
   const items = data.items.filter(
     (i) =>
       matchesSearch(filters.q, i.model, i.imei) &&
@@ -144,6 +148,7 @@ export default async function ERP({
             ["contracts", "Nasiya"],
             ["payments", "To‘lovlar"],
             ["approvals", "Tasdiq kutayotgan"],
+            ["closures", "Erta yopilgan"],
             ["arrears", "Qarzdorlar"],
             ["cash", "Kassa"],
             ["sales", "Naqd savdo"],
@@ -385,6 +390,12 @@ export default async function ERP({
           <>
             <h1>Tasdiq kutayotgan tushumlar</h1>
             <ApprovalsPanel branchId={branch} pending={pending} />
+          </>
+        ) : null}
+        {tab === "closures" && closures ? (
+          <>
+            <h1>Muddatidan oldin yopilgan shartnomalar</h1>
+            <ClosuresPanel report={closures} branchId={branch} />
           </>
         ) : null}
       </main>

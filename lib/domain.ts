@@ -183,6 +183,95 @@ export function authorize(role: string, amal: Amal | boolean = "read") {
     amal === true ? "payment.create" : amal === false ? "read" : amal;
   if (!can(role, kerak)) throw new Error("Ruxsat yo‘q");
 }
+/**
+ * Shartnoma sanasiga `n` oy qo'shish.
+ *
+ * 31-yanvarga bir oy qo'shilsa fevral oxiri chiqadi, lekin keyingi oylar
+ * asl kunga qaytadi (TZ 4.3, AT-08). Natija YYYY-MM-DD.
+ */
+export function oyQoshish(start: string, n: number) {
+  const d = new Date(start + "T00:00:00Z");
+  if (Number.isNaN(d.getTime())) throw new Error("Noto‘g‘ri sana");
+  const oxiri = new Date(
+    Date.UTC(d.getUTCFullYear(), d.getUTCMonth() + n + 1, 0),
+  );
+  oxiri.setUTCDate(Math.min(d.getUTCDate(), oxiri.getUTCDate()));
+  return oxiri.toISOString().slice(0, 10);
+}
+
+/**
+ * Shartnoma sanasidan hisob sanasigacha o'tgan to'liq oylik davrlar (m).
+ *
+ * Davr chegaralari jadvaldagi oy qo'shish sanalari bilan aniqlanadi.
+ * Birinchi oy tugashidan oldin yopilsa 0 qaytadi; tugamagan oy uchun
+ * kunlik ustama hisoblanmaydi (TZ PAY-08, AT-36).
+ */
+export function otganDavrlar(start: string, until: string, months: number) {
+  let m = 0;
+  for (let i = 1; i <= months; i++) {
+    if (oyQoshish(start, i) <= until) m = i;
+    else break;
+  }
+  return m;
+}
+
+/**
+ * Muddatidan oldin to'liq yopish hisobi (TZ PAY-08).
+ *
+ *   I_accrued = min(M, D × r × m)              saqlanadigan hisoblangan ustama
+ *   I_paid    = to'langan summadagi ustama ulushi
+ *   C         = min(B, max(0, M − max(I_accrued, I_paid)))   bekor qilinadi
+ *   S         = B − C                           yopish uchun to'lanadi
+ *
+ * Oldin tasdiqlab olingan ustama qaytarilmaydi: faqat qolgan kelgusi
+ * ustama bekor qilinadi.
+ */
+export function yopishHisobi(v: {
+  /** Asosiy nasiya qarzi D */
+  principal: number;
+  /** Jami dastlabki ustama M */
+  markup: number;
+  /** Oylik ustama bazis punktda r */
+  rateBp: number;
+  /** O'tgan to'liq oylik davrlar m */
+  periods: number;
+  /** Yopishdan oldingi tasdiqlangan qarz qoldig'i B */
+  debt: number;
+}) {
+  const { principal, markup, rateBp, periods, debt } = v;
+  if (
+    ![principal, markup, rateBp, periods, debt].every((n) =>
+      Number.isSafeInteger(n),
+    ) ||
+    principal <= 0 ||
+    markup < 0 ||
+    rateBp < 0 ||
+    periods < 0 ||
+    debt <= 0 ||
+    debt > principal + markup
+  )
+    throw new Error("Yopish hisobi uchun ma’lumot yetarli emas");
+  const jami = principal + markup;
+  // To'langan summadagi ustama ulushi: manbadagi ulush usuli.
+  const paid = jami - debt;
+  const paidMarkup = jami > 0 ? Math.round((paid * markup) / jami) : 0;
+  const accrued = Math.min(
+    markup,
+    Math.round((principal * rateBp * periods) / 10000),
+  );
+  const cancelled = Math.min(
+    debt,
+    Math.max(0, markup - Math.max(accrued, paidMarkup)),
+  );
+  return {
+    paidMarkup,
+    accrued,
+    markupKept: markup - cancelled,
+    markupCancelled: cancelled,
+    closeAmount: debt - cancelled,
+  };
+}
+
 export function schedule(
   total: number,
   down: number,
@@ -206,20 +295,14 @@ export function schedule(
   const balance = total - down,
     monthly = Math.round(balance / months),
     last = balance - monthly * (months - 1);
-  const d = new Date(start + "T00:00:00Z");
-  if (Number.isNaN(d.getTime()) || monthly < 1 || last < 1)
+  if (Number.isNaN(new Date(start + "T00:00:00Z").getTime()))
     throw new Error("Noto‘g‘ri sana yoki summa");
-  return Array.from({ length: months }, (_, i) => {
-    const first = new Date(
-      Date.UTC(d.getUTCFullYear(), d.getUTCMonth() + i + 2, 0),
-    );
-    first.setUTCDate(Math.min(d.getUTCDate(), first.getUTCDate()));
-    return {
-      sequence: i + 1,
-      dueDate: first.toISOString().slice(0, 10),
-      amount: i === months - 1 ? last : monthly,
-    };
-  });
+  if (monthly < 1 || last < 1) throw new Error("Noto‘g‘ri sana yoki summa");
+  return Array.from({ length: months }, (_, i) => ({
+    sequence: i + 1,
+    dueDate: oyQoshish(start, i + 1),
+    amount: i === months - 1 ? last : monthly,
+  }));
 }
 /**
  * Nasiya shartnomasining summalari.

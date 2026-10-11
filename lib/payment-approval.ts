@@ -4,6 +4,7 @@ import { db, transaction } from "./db";
 import { can, assertPayment, tasdiqAmal, TOLOV_USULLARI } from "./domain";
 import { postCashReceipt } from "./cash";
 import { tushumMinor } from "./cash-domain";
+import { qarzSql } from "./qarz-sql";
 import { yozAvans } from "./service";
 
 export const approvalSchema = z
@@ -30,8 +31,7 @@ export async function readPending(branchId: string) {
         await db.query(
           `SELECT p.id,p.amount,p.advance_amount,p.usd_cents,p.rate,p.method,p.evidence,p.created_at,p.contract_id,
  c.customer_label,c.number,i.model,i.imei,u.email author,
- c.total-c.down_payment-COALESCE((SELECT sum(x.amount) FROM payments x
-   WHERE x.contract_id=c.id AND x.status='approved' AND x.voided_at IS NULL),0) balance
+ ${qarzSql()} balance
  FROM payments p
  JOIN contracts c ON c.id=p.contract_id AND c.tenant_id=p.tenant_id AND c.branch_id=p.branch_id
  JOIN inventory i ON i.id=c.inventory_id AND i.tenant_id=c.tenant_id AND i.branch_id=c.branch_id
@@ -92,23 +92,20 @@ export async function decidePayment(raw: unknown) {
     let applied = received,
       advance = 0;
     if (v.decision === "approve") {
-      const contract = (
-        await c.query(
-          "SELECT total,down_payment FROM contracts WHERE tenant_id=$1 AND branch_id=$2 AND id=$3 FOR UPDATE",
-          [s.tenant_id, s.branch_id, payment.contract_id],
-        )
-      ).rows[0];
-      const paid = Number(
-        (
-          await c.query(
-            "SELECT COALESCE(sum(amount),0) paid FROM payments WHERE contract_id=$1 AND status='approved' AND voided_at IS NULL",
-            [payment.contract_id],
-          )
-        ).rows[0].paid,
+      await c.query(
+        "SELECT id FROM contracts WHERE tenant_id=$1 AND branch_id=$2 AND id=$3 FOR UPDATE",
+        [s.tenant_id, s.branch_id, payment.contract_id],
       );
       const balance = Math.max(
         0,
-        Number(contract.total) - Number(contract.down_payment) - paid,
+        Number(
+          (
+            await c.query(
+              `SELECT ${qarzSql()} balance FROM contracts c WHERE c.id=$1`,
+              [payment.contract_id],
+            )
+          ).rows[0].balance,
+        ),
       );
       // Kutish davomida qarz kamaygan bo'lishi mumkin: taqsimot tasdiq
       // paytidagi qoldiqdan qayta hisoblanadi, ortig'i avansga tushadi

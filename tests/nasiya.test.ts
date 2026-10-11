@@ -5,6 +5,9 @@ import {
   paymentSchema,
   nasiyaTotals,
   schedule,
+  yopishHisobi,
+  otganDavrlar,
+  oyQoshish,
 } from "../lib/domain";
 
 test("ustama oddiy foiz: asosiy qarz * oylik foiz * muddat", () => {
@@ -183,4 +186,93 @@ test("AT-10: kursi yo'q USD to'lov qabul qilinmaydi", () => {
       false,
       usd,
     );
+});
+
+test("PAY-08: erta yopishda kelgusi ustama bekor qilinadi (AT-28)", () => {
+  // TZ 11.1: narx 1000 USD, kurs 12 000, boshlang'ich 3 600 000, 6 oy, 5%.
+  // D = 8 400 000, M = 2 520 000, oylik 1 820 000.
+  const t = nasiyaTotals(12_000_000, 3_600_000, 6, 500);
+  assert.equal(t.principal, 8_400_000);
+  assert.equal(t.markup, 2_520_000);
+  assert.equal(t.monthly, 1_820_000);
+  // 2 oy to'lagan: qarz 10 920 000 - 3 640 000 = 7 280 000.
+  const h = yopishHisobi({
+    principal: 8_400_000,
+    markup: 2_520_000,
+    rateBp: 500,
+    periods: 2,
+    debt: 7_280_000,
+  });
+  assert.equal(h.paidMarkup, 840_000);
+  assert.equal(h.accrued, 840_000);
+  assert.equal(h.markupCancelled, 1_680_000);
+  assert.equal(h.closeAmount, 5_600_000);
+  assert.equal(h.markupKept, 840_000);
+  // Yopgandan keyin qarz aynan nol bo'ladi.
+  assert.equal(7_280_000 - h.closeAmount - h.markupCancelled, 0);
+});
+
+test("AT-36: birinchi oy tugashidan oldin yopish - o'tgan davr 0", () => {
+  const h = yopishHisobi({
+    principal: 8_400_000,
+    markup: 2_520_000,
+    rateBp: 500,
+    periods: 0,
+    debt: 10_920_000,
+  });
+  assert.equal(h.accrued, 0);
+  assert.equal(h.paidMarkup, 0);
+  assert.equal(h.markupCancelled, 2_520_000, "hamma ustama bekor qilinadi");
+  assert.equal(h.closeAmount, 8_400_000, "faqat asosiy qarz to'lanadi");
+});
+
+test("AT-37: jadval oxirida yopishda chegirma yo'q", () => {
+  const h = yopishHisobi({
+    principal: 8_400_000,
+    markup: 2_520_000,
+    rateBp: 500,
+    periods: 6,
+    debt: 1_820_000,
+  });
+  assert.equal(h.markupCancelled, 0);
+  assert.equal(h.closeAmount, 1_820_000);
+});
+
+test("erta yopishda olingan ustama qaytarilmaydi", () => {
+  // Mijoz 5 oy to'lagan: to'langan ustama hisoblangan ustamadan ko'p.
+  const h = yopishHisobi({
+    principal: 8_400_000,
+    markup: 2_520_000,
+    rateBp: 500,
+    periods: 3,
+    debt: 1_820_000,
+  });
+  // To'langan 9 100 000 dan ustama ulushi 2 100 000; hisoblangan 1 260 000.
+  assert.equal(h.paidMarkup, 2_100_000);
+  assert.equal(h.accrued, 1_260_000);
+  // Bekor qilinadigan faqat qolgan 420 000.
+  assert.equal(h.markupCancelled, 420_000);
+  assert.equal(h.closeAmount, 1_400_000);
+  assert.ok(h.closeAmount > 0, "asosiy qarz avtomatik kechirilmaydi");
+});
+
+test("otganDavrlar oy chegaralarini jadval sanalari bilan sanaydi", () => {
+  assert.equal(otganDavrlar("2026-01-31", "2026-02-27", 6), 0);
+  assert.equal(otganDavrlar("2026-01-31", "2026-02-28", 6), 1);
+  assert.equal(otganDavrlar("2026-01-31", "2026-03-30", 6), 1);
+  assert.equal(otganDavrlar("2026-01-31", "2026-03-31", 6), 2);
+  assert.equal(otganDavrlar("2026-01-31", "2027-12-31", 6), 6, "muddatdan oshmaydi");
+  assert.equal(oyQoshish("2026-01-31", 1), "2026-02-28");
+  assert.equal(oyQoshish("2026-01-31", 2), "2026-03-31");
+});
+
+test("yopish hisobi noto'g'ri ma'lumotni rad etadi", () => {
+  for (const v of [
+    { principal: 0, markup: 100, rateBp: 500, periods: 1, debt: 100 },
+    { principal: 100, markup: -1, rateBp: 500, periods: 1, debt: 100 },
+    { principal: 100, markup: 0, rateBp: 500, periods: 1, debt: 0 },
+    { principal: 100, markup: 10, rateBp: 500, periods: 1, debt: 111 },
+    { principal: 100, markup: 10, rateBp: 500, periods: -1, debt: 100 },
+  ])
+    assert.throws(() => yopishHisobi(v), JSON.stringify(v));
 });
