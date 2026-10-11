@@ -162,6 +162,36 @@ Hisobchi, Faqat ko'rish. Sozlamalar ekranida xodimga rol beriladi. Hozir
 administrator rahbar huquqini ham oladi (do'kon egasi ikkala vazifani
 bajaradi) — alohida rahbar kerak bo'lsa aytasiz, bir qatorda ajratiladi.
 
+### Qarzni muddatidan oldin yopish
+
+Mijoz qarzni bir yo'la yopmoqchi bo'lsa, shartnoma sahifasida
+**"Yopish hisobini olish"** ni bosing. Ekranda ko'rinadi: joriy qarz,
+o'tgan to'liq oylar, saqlanadigan ustama, **avtomatik olib tashlanadigan
+ustama** va yakuniy summa. Kelgusi oylarning to'lanmagan ustamasi o'zi
+olib tashlanadi — alohida chegirma tasdig'i kerak emas.
+
+Hisob **shu kun uchun** amal qiladi. Mijoz shu summani to'laydi (odatdagi
+to'lov ekrani, tasdiq tartibi bilan), keyin "Yopishni yakunlash" bosiladi.
+Tasdiqlanmagan tushum bilan shartnoma yopilmaydi.
+
+Yopilganlar **"Erta yopilgan"** bo'limida: qancha ustamadan voz
+kechganingiz jami bo'lib ko'rinadi. To'lovni keyin bekor qilsangiz yopish
+ham teskari qiladi va qarz qaytadi.
+
+### Ortiqcha to'lov va dollar
+
+- Mijoz qarzdan **ortiq** bergan bo'lsa, to'lov rad etilmaydi: ortiqcha
+  qism "mijoz avansi" bo'lib turadi, qarz esa manfiy ko'rsatilmaydi.
+- **Naqd USD** to'lovida dollar summasi va kurs kiritiladi, so'mga
+  o'tkazilgan summa darhol ekranda ko'rinadi. Kursi yo'q USD to'lov
+  saqlanmaydi. Naqd USD hamyoniga dollar tushadi, so'm emas.
+
+### To'lov eslatmasi
+
+"Qarzdorlar" bo'limida har mijoz uchun **"Eslatma matni"** tugmasi bor:
+matn tayyor bo'ladi va bir bosishda nusxalanadi — Telegram yoki SMS ga
+qo'yib yuborasiz. Telefon raqami yonida, bosilsa qo'ng'iroq qiladi.
+
 Hali yo'q:
 
 - **Kirim (ombor) maydonlari formada.** Brend, xotira, rang, holat, batareya,
