@@ -13,6 +13,8 @@ import { can } from "../../../../lib/domain";
 import { readClosure } from "../../../../lib/closure";
 import { readCustomer } from "../../../../lib/customer";
 import { CustomerPanel } from "../../customer-panel";
+import { readControl } from "../../../../lib/device-control";
+import { ControlPanel } from "../../control-panel";
 import { ClosurePanel } from "../../closure-panel";
 import { PaymentHistory } from "../../payment-history";
 export const dynamic = "force-dynamic";
@@ -49,6 +51,7 @@ export default async function ContractPage({
   const history = await readPaymentHistory(branch, filters, id);
   const closure = await readClosure(branch, id);
   const mijoz = c.customer_id ? await readCustomer(branch, c.customer_id) : null;
+  const nazorat = await readControl(branch, id);
   return (
     <>
       <header>
@@ -180,6 +183,14 @@ export default async function ContractPage({
             />
           </>
         ) : null}
+        <ControlPanel
+          branchId={branch}
+          contractId={id}
+          state={c.control_state}
+          history={nazorat.history}
+          canControl={nazorat.canControl}
+          debtLeft={Number(c.balance) > 0}
+        />
         {closure.canClose && (Number(c.balance) > 0 || closure.done) ? (
           <ClosurePanel
             branchId={branch}

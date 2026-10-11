@@ -123,7 +123,9 @@ export type Amal =
   | "settings.write"
   // Mijoz limitidan oshirib shartnoma tuzish va qora ro'yxatni boshqarish
   | "limit.override"
-  | "customer.block";
+  | "customer.block"
+  // iCloud/MDM nazorati: bloklash va ochish
+  | "device.control";
 
 // Kichik do'kon haqiqati: kassir ayni paytda sotuvchi va omborchi ham.
 // Omborchi/sotuvchi rollari ajratilganda ularning huquqi shu jadvalda
@@ -144,6 +146,7 @@ const HUQUQLAR: Record<Rol, Amal[]> = {
     "settings.write",
     "limit.override",
     "customer.block",
+    "device.control",
   ],
   manager: [
     "read",
@@ -159,6 +162,7 @@ const HUQUQLAR: Record<Rol, Amal[]> = {
     "cash.reverse",
     "limit.override",
     "customer.block",
+    "device.control",
   ],
   cashier: [
     "read",

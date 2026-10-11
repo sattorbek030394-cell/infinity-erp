@@ -385,6 +385,26 @@ export async function readBranch(branchId: string) {
       )
     ).rows[0].total,
     kurs: await kunlikKurs(s.tenant_id),
+    // Yopilgan, lekin nazoratdan chiqarilmagan qurilmalar (taklif 3.2).
+    unreleased: Number(
+      (
+        await db.query(
+          `SELECT count(*) n FROM contracts c WHERE c.tenant_id=$1 AND c.branch_id=$2
+ AND c.control_state IN ('installed','blocked') AND (${qarzSql()})<=0`,
+          args,
+        )
+      ).rows[0].n,
+    ),
+    // Inkassatsiya: undiruvchi qabul qilgan, kassirga topshirilmagan naqd
+    // pul (taklif 3.8). Kassa qoldig'iga kirmaydi.
+    inTransit: (
+      await db.query(
+        `SELECT coalesce(sum(amount+advance_amount),0)::text total,count(*) n
+ FROM payments WHERE tenant_id=$1 AND branch_id=$2 AND status='pending'
+ AND method IN ('cash','cash_usd')`,
+        args,
+      )
+    ).rows[0],
     // Mijoz avanslari qarzdan alohida yuritiladi (PAY-04).
     advances: (
       await db.query(

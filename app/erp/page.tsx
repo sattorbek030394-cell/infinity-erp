@@ -222,6 +222,26 @@ export default async function ERP({
                 </strong>
                 <p>Boshlang‘ich va keyingi to‘lovlar. Kassa balansi emas.</p>
               </section>
+              {Number(data.inTransit.n) > 0 ? (
+                <section>
+                  <h2>Undiruvchi qo‘lida</h2>
+                  <strong>{money(data.inTransit.total)}</strong>
+                  <p>
+                    {data.inTransit.n} ta naqd tushum kassir tasdig‘ini
+                    kutmoqda. Kassa qoldig‘iga kirmagan.
+                  </p>
+                </section>
+              ) : null}
+              {data.unreleased > 0 ? (
+                <section>
+                  <h2>Nazorat ochilmagan</h2>
+                  <strong>{data.unreleased}</strong>
+                  <p>
+                    Qarzi yopilgan, lekin iCloud/MDM nazorati hali
+                    chiqarilmagan qurilmalar.
+                  </p>
+                </section>
+              ) : null}
               {Number(data.advances) > 0 ? (
                 <section>
                   <h2>Mijoz avanslari</h2>

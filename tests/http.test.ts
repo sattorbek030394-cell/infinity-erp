@@ -2527,3 +2527,170 @@ test(
       assert.ok(html.includes(k), "topilmadi: " + k);
   },
 );
+
+test(
+  "HTTP: qurilma nazorati va inkassatsiya ko'rsatkichi",
+  { skip: !connection },
+  async () => {
+    const auth = await login(admin + "@example.invalid");
+    const kassirAuth = await login(kassir + "@example.invalid");
+    const item = (
+      await (
+        await post(
+          "inventory",
+          { imei: "588888888888888", model: "SYNTHETIC NAZORAT", cost: 5_000_000 },
+          b1,
+          auth,
+        )
+      ).json()
+    ).id;
+    const contract = (
+      await (
+        await post(
+          "contracts",
+          {
+            inventoryId: item,
+            customerName: "SYNTHETIC NAZORAT mijoz",
+            priceUzs: 6_000_000,
+            downPayment: 1_000_000,
+            months: 3,
+            monthlyRateBp: 500,
+            startDate: "2026-09-25",
+          },
+          b1,
+          auth,
+        )
+      ).json()
+    ).id;
+    const control = (body: Record<string, unknown>, cookie = auth) =>
+      fetch(origin + "/api/devices/control", {
+        method: "POST",
+        headers: { cookie, origin, "content-type": "application/json" },
+        body: JSON.stringify({ branchId: b1, contractId: contract, ...body }),
+      });
+    const holat = async () =>
+      (
+        await pool.query("SELECT control_state FROM contracts WHERE id=$1", [
+          contract,
+        ])
+      ).rows[0].control_state;
+    assert.equal(await holat(), "none");
+    // O'rnatmasdan bloklab bo'lmaydi.
+    assert.equal(
+      (await control({ action: "block", reason: "Kechikdi juda" })).status,
+      400,
+    );
+    assert.equal((await control({ action: "install" })).status, 200);
+    assert.equal(await holat(), "installed");
+    // Bloklashda sabab majburiy.
+    assert.equal((await control({ action: "block" })).status, 400);
+    assert.equal(
+      (await control({ action: "block", reason: "45 kun kechikdi, aloqa yo‘q" }))
+        .status,
+      200,
+    );
+    assert.equal(await holat(), "blocked");
+    // Faqat ko'ruvchi rolida nazoratga tegib bo'lmaydi.
+    assert.equal(
+      (
+        await control(
+          { action: "unblock" },
+          await login(viewer + "@example.invalid"),
+        )
+      ).status,
+      403,
+    );
+    assert.equal((await control({ action: "unblock" })).status, 200);
+    assert.equal(await holat(), "installed");
+    // Hujjat qolgan: sabab, kechikish va qarz yozilgan.
+    const log = (
+      await pool.query(
+        "SELECT action,reason,debt FROM device_controls WHERE contract_id=$1 ORDER BY created_at",
+        [contract],
+      )
+    ).rows;
+    assert.deepEqual(
+      log.map((r) => r.action),
+      ["install", "block", "unblock"],
+    );
+    assert.ok(log[1].reason.includes("45 kun"));
+    assert.equal(Number(log[1].debt), 5_750_000);
+    // Shartnoma sahifasida holat va tarix ko'rinadi.
+    const sahifa = await (
+      await fetch(origin + "/erp/contracts/" + contract + "?branch=" + b1, {
+        headers: { cookie: auth },
+      })
+    ).text();
+    assert.ok(sahifa.includes("Qurilma nazorati"));
+    assert.ok(sahifa.includes("45 kun kechikdi"));
+    assert.ok(sahifa.includes("Nazoratda"));
+
+    // Inkassatsiya: kassir kiritgan naqd tushum kassa qoldig'iga kirmaydi,
+    // lekin dashboardda "undiruvchi qo'lida" bo'lib ko'rinadi.
+    const undiruvchi = randomUUID();
+    extraUsers.push(undiruvchi);
+    await pool.query("INSERT INTO users VALUES($1,$2,$3)", [
+      undiruvchi,
+      undiruvchi + "@example.invalid",
+      (
+        await pool.query("SELECT password_hash FROM users WHERE id=$1", [admin])
+      ).rows[0].password_hash,
+    ]);
+    await pool.query(
+      "INSERT INTO memberships VALUES($1,$2,$3,'collector')",
+      [undiruvchi, tenant, b1],
+    );
+    const undiruvchiAuth = await login(undiruvchi + "@example.invalid");
+    const naqd = await post(
+      "payments",
+      {
+        contractId: contract,
+        amount: 500_000,
+        method: "cash",
+        requestKey: randomUUID(),
+      },
+      b1,
+      undiruvchiAuth,
+    );
+    assert.equal(naqd.status, 200);
+    assert.equal(
+      (
+        await pool.query("SELECT status FROM payments WHERE id=$1", [
+          (await naqd.json()).id,
+        ])
+      ).rows[0].status,
+      "pending",
+      "undiruvchi naqd pulni o'zi tasdiqlay olmaydi",
+    );
+    const dash = await (
+      await fetch(origin + "/erp?branch=" + b1 + "&tab=dashboard", {
+        headers: { cookie: auth },
+      })
+    ).text();
+    assert.ok(dash.includes("Undiruvchi qo‘lida"));
+    // Kassir tasdiqlaganda pul kassaga kiradi.
+    assert.equal(
+      (
+        await fetch(origin + "/api/payments/approve", {
+          method: "POST",
+          headers: {
+            cookie: kassirAuth,
+            origin,
+            "content-type": "application/json",
+          },
+          body: JSON.stringify({
+            branchId: b1,
+            paymentId: (
+              await pool.query(
+                "SELECT id FROM payments WHERE contract_id=$1 AND status='pending'",
+                [contract],
+              )
+            ).rows[0].id,
+            decision: "approve",
+          }),
+        })
+      ).status,
+      200,
+    );
+  },
+);
