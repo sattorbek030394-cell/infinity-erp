@@ -65,6 +65,58 @@ export function schedule(
     };
   });
 }
+// Oylik ustama bazis punktda: 500 = oyiga 5%. Butun son bo'lgani uchun
+// kasr xatosi yig'ilmaydi.
+export const rateBp = z.coerce.number().int().min(0).max(10000);
+
+/**
+ * Nasiya shartnomasining summalari.
+ *
+ * Ustama oddiy foiz: har oy uchun asosiy qarzdan bir xil foiz olinadi,
+ * qoldiq kamayganda ham kamaymaydi. Excel shu qoida bilan ishlagan va
+ * 150 ta mavjud shartnomada bu hisob aynan mos keladi.
+ *
+ *   asosiy qarz = narx - boshlang'ich to'lov
+ *   ustama      = asosiy qarz * oylik foiz * muddat
+ *   jami        = boshlang'ich to'lov + asosiy qarz + ustama
+ *
+ * `jami` ichiga boshlang'ich to'lov ham kiradi, chunki `contracts.total`
+ * shu ma'noda ishlatiladi va `schedule()` undan boshlang'ichni ayiradi.
+ */
+export function nasiyaTotals(
+  price: number,
+  down: number,
+  months: number,
+  bp: number,
+) {
+  if (
+    !Number.isSafeInteger(price) ||
+    !Number.isSafeInteger(down) ||
+    !Number.isInteger(months) ||
+    !Number.isInteger(bp) ||
+    price <= 0 ||
+    down < 0 ||
+    down >= price ||
+    months < 1 ||
+    months > 36 ||
+    bp < 0 ||
+    bp > 10000
+  )
+    throw new Error("Noto‘g‘ri nasiya shartlari");
+  const principal = price - down;
+  const markup = Math.round((principal * bp * months) / 10000);
+  const total = down + principal + markup;
+  if (!Number.isSafeInteger(total)) throw new Error("Summa juda katta");
+  return {
+    principal,
+    markup,
+    total,
+    // Mijozga aytiladigan oylik to'lov. Yaxlitlash tufayli oxirgi oy
+    // biroz boshqacha bo'lishi mumkin - aniq jadvalni schedule() beradi.
+    monthly: Math.round((principal + markup) / months),
+  };
+}
+
 export function assertPayment(amount: number, balance: number) {
   if (!Number.isSafeInteger(amount) || amount <= 0 || amount > balance)
     throw new Error("To‘lov qoldiqdan oshmasligi kerak");
