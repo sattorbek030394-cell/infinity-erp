@@ -299,13 +299,39 @@ boshlanadi. Eski qarzlarni qo'lda kiritish uchun shu summadagi "qarzga"
 kirim yozib, keyin to'lovini kiritish mumkin; yoki varaq tanlab import
 tayyor bo'lguncha Excelda yuritasiz.
 
+### Foyda hisoboti
+
+Yangi "Foyda" bo'limi Excel'ning Hisobot varag'ini almashtiradi:
+
+- **Sof foyda** = sotuv marjasi + nasiya ustama daromadi − xarajat. Har
+  raqamning tarkibi yonida yozilgan.
+- Nasiya daromadi **to'lov tushganda** tan olinadi (to'lovdagi ustama
+  ulushi), shartnoma tuzilganda emas. Boshlang'ich to'lov va mijoz avansi
+  daromadga kirmaydi; erta yopishda bekor qilingan ustama o'sha oy
+  daromadidan ayriladi.
+- Telefon xaridi va ta'minotchiga to'lov **xarajat emas** — ular tannarx
+  orqali marjada hisobga olingan. Egasi va investor olgan pul ham xarajat
+  emas: foyda taqsimoti sifatida alohida ko'rsatiladi.
+- **Oylik reja:** olti ko'rsatkich (sotuv dona va summasi — naqd/nasiya
+  alohida, undirish, sof foyda) uchun plan, fakt, bajarilish foizi, qolgan
+  va kunlik kerakli natija. Plan nol bo'lsa foiz hisoblanmaydi.
+- **Sotuvchilar va kanallar** kesimi: kim qancha sotgan, qaysi kanaldan
+  mijoz kelgan. Reklama xarajatini shu jadval bilan solishtirib bir mijoz
+  qancha turganini ko'rasiz.
+- **Ombordagi tovar** (soni, tannarxi, prognoz narx bo'yicha kutilayotgan
+  foyda) va **nasiya portfeli** (asosiy qarz, kelishilgan ustama, qoldiq).
+- **Telegram uchun tayyor matn** — har kuni guruhga tashlaydigan xulosa,
+  bir bosishda nusxalanadi.
+
+Dollardagi xarajat oxirgi ma'lum kurs bilan so'mga o'tkaziladi va kurs
+hisobotda yoziladi.
+
 Hali yo'q:
 
 - **Aksessuar va xizmat sotuvi** (chexol, oyna, remont) — model hozircha
   faqat IMEI'li qurilmani biladi.
 - **Kafil, minimal sotuv narxi va sotuvchi bonusi** — qaror kutilmoqda.
 - **Investor moduli** — kapital, foyda taqsimoti; Excel'dan ham ko'chmaydi.
-- **Hisobot ekrani.** Plan–fakt va 12 oylik jadval hozircha Excelda.
 
 Shuning uchun birinchi hafta Excel'ni yopmang: dasturda tuzgan shartnomani
 Excelga ham kiriting va raqamlarni solishtirib turing.
