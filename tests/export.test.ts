@@ -19,6 +19,7 @@ test("xlsx export preserves IMEI and hostile labels as text, exact numeric amoun
       contracts: [],
       payments: [],
       arrears: [],
+      sales: [],
       cashBalances: [
         {
           wallet: "cash_usd",
@@ -61,7 +62,8 @@ test("xlsx export preserves IMEI and hostile labels as text, exact numeric amoun
   }
   assert.equal(bytes.readUInt32LE(offset), 0x02014b50);
   assert.equal(bytes.readUInt32LE(bytes.length - 22), 0x06054b50);
-  assert.equal(Object.keys(entries).length, 12);
+  assert.equal(Object.keys(entries).length, 13);
+  assert.ok(entries["xl/workbook.xml"].includes("Naqd savdo"));
   assert.ok(entries["xl/worksheets/sheet6.xml"].includes("100.24 USD"));
   assert.ok(entries["xl/worksheets/sheet6.xml"].includes("Noma’lum"));
   assert.ok(entries["xl/worksheets/sheet7.xml"].includes("-0.01 USD"));
@@ -94,6 +96,7 @@ test("xlsx export preserves IMEI and hostile labels as text, exact numeric amoun
       contracts: [],
       payments: [],
       arrears: [],
+      sales: [],
       cashBalances: [],
       cashEntries: [],
     }),

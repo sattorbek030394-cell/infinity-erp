@@ -179,7 +179,7 @@ export async function readCash(branchId: string, requestedPage: number) {
     page = Math.min(requestedPage, pages);
   const entries = (
     await db.query(
-      "SELECT e.id,e.wallet,e.entry_date::text,e.amount_minor::text,e.category,e.note,e.payment_id,e.contract_id,e.operation_id,e.reversal_of,EXISTS(SELECT 1 FROM cash_entries r WHERE r.reversal_of=e.id) reversed FROM cash_entries e WHERE e.tenant_id=$1 AND e.branch_id=$2 ORDER BY e.entry_date DESC,e.created_at DESC,e.id DESC LIMIT 20 OFFSET $3",
+      "SELECT e.id,e.wallet,e.entry_date::text,e.amount_minor::text,e.category,e.note,e.payment_id,e.contract_id,e.sale_id,e.operation_id,e.reversal_of,EXISTS(SELECT 1 FROM cash_entries r WHERE r.reversal_of=e.id) reversed FROM cash_entries e WHERE e.tenant_id=$1 AND e.branch_id=$2 ORDER BY e.entry_date DESC,e.created_at DESC,e.id DESC LIMIT 20 OFFSET $3",
       [s.tenant_id, s.branch_id, (page - 1) * 20],
     )
   ).rows;

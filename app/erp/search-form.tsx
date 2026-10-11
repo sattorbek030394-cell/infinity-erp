@@ -22,7 +22,7 @@ export function SearchForm({
           maxLength={80}
           defaultValue={filters.q}
           placeholder={
-            tab === "inventory"
+            tab === "inventory" || tab === "sales"
               ? "Model yoki IMEI"
               : "Mijoz belgisi, IMEI yoki shartnoma ID"
           }
@@ -47,7 +47,7 @@ export function SearchForm({
           </select>
         </label>
       ) : null}
-      {tab === "payments" ? (
+      {tab === "payments" || tab === "sales" ? (
         <>
           <label>
             To‘lov usuli

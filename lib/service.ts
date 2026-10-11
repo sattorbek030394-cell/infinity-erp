@@ -135,5 +135,11 @@ export async function readBranch(branchId: string) {
     items: items.rows,
     contracts: contracts.rows,
     role: s.role,
+    salesTotal: (
+      await db.query(
+        "SELECT coalesce(sum(amount),0)::text total FROM cash_sales WHERE tenant_id=$1 AND branch_id=$2",
+        args,
+      )
+    ).rows[0].total,
   };
 }

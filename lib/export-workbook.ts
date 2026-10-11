@@ -11,6 +11,7 @@ export type ExportData = {
   arrears: Row[];
   cashBalances: Row[];
   cashEntries: Row[];
+  sales: Row[];
 };
 export async function exportWorkbook(data: ExportData) {
   const sheets: ExportSheet[] = [];
@@ -194,6 +195,7 @@ export async function exportWorkbook(data: ExportData) {
       "Shartnoma ID",
       "Yozilgan vaqt (Toshkent)",
       "Muallif",
+      "Savdo ID",
     ],
     data.cashEntries.map((r) => [
       text(r.id),
@@ -206,16 +208,43 @@ export async function exportWorkbook(data: ExportData) {
         ? "Bekor qilish yozuvi"
         : r.reversed
           ? "Bekor qilingan"
-          : r.payment_id || r.contract_id
-            ? "Nasiya — avtomatik"
-            : "Qo‘lda yozilgan",
+          : r.sale_id
+            ? "Naqd savdo — avtomatik"
+            : r.payment_id || r.contract_id
+              ? "Nasiya — avtomatik"
+              : "Qo‘lda yozilgan",
       text(r.reversal_of),
       text(r.operation_id),
       text(r.payment_id),
       text(r.contract_id),
       text(r.recorded_at),
       text(r.author),
+      text(r.sale_id),
     ]),
+  );
+  add(
+    "Naqd savdo",
+    [
+      "Savdo ID",
+      "Vaqt (Toshkent)",
+      "Model",
+      "IMEI",
+      "Mijoz belgisi",
+      "Summa UZS",
+      "Usul",
+      "Muallif",
+    ],
+    data.sales.map((r) => [
+      text(r.id),
+      text(r.sale_time),
+      text(r.model),
+      text(r.imei),
+      text(r.customer_label),
+      amount(r.amount),
+      r.method === "cash" ? "Naqd" : r.method === "card" ? "Karta" : "O‘tkazma",
+      text(r.author),
+    ]),
+    [6],
   );
   return staticWorkbook(sheets);
 }

@@ -17,6 +17,9 @@ import { readArrears } from "../../lib/arrears";
 import { ArrearsList } from "./arrears-list";
 import { readCash } from "../../lib/cash";
 import { CashPanel } from "./cash-panel";
+import { readSales } from "../../lib/sales";
+import { SalesPanel } from "./sales-panel";
+import { cashMoney } from "../../lib/cash-domain";
 export const dynamic = "force-dynamic";
 export default async function ERP({
   searchParams,
@@ -62,6 +65,7 @@ export default async function ERP({
       "payments",
       "arrears",
       "cash",
+      "sales",
     ].includes(query.tab)
       ? query.tab
       : "dashboard";
@@ -74,6 +78,7 @@ export default async function ERP({
   const data = await readBranch(branch);
   const arrears = tab === "arrears" ? await readArrears(branch) : null;
   const cash = tab === "cash" ? await readCash(branch, filters.page) : null;
+  const sales = tab === "sales" ? await readSales(branch, filters) : null;
   const items = data.items.filter(
     (i) =>
       matchesSearch(filters.q, i.model, i.imei) &&
@@ -135,6 +140,7 @@ export default async function ERP({
             ["payments", "To‘lovlar"],
             ["arrears", "Qarzdorlar"],
             ["cash", "Kassa"],
+            ["sales", "Naqd savdo"],
           ].map(([key, label]) => (
             <a
               className={tab === key ? "active" : ""}
@@ -165,6 +171,16 @@ export default async function ERP({
         {cash ? (
           <CashPanel report={cash} branch={branch} role={data.role} />
         ) : null}
+        {sales ? (
+          <SalesPanel
+            report={sales}
+            branch={branch}
+            filters={filters}
+            items={data.items
+              .filter((i) => i.status === "available")
+              .map((i) => ({ id: i.id, label: i.model + " / " + i.imei }))}
+          />
+        ) : null}
         {tab === "dashboard" ? (
           <>
             <h1>Dashboard</h1>
@@ -184,7 +200,7 @@ export default async function ERP({
                 </strong>
               </section>
               <section>
-                <h2>Olingan mablag‘</h2>
+                <h2>Olingan nasiya to‘lovlari</h2>
                 <strong>
                   {money(
                     data.contracts.reduce(
@@ -196,6 +212,13 @@ export default async function ERP({
                 <p>Boshlang‘ich va keyingi to‘lovlar. Kassa balansi emas.</p>
               </section>
             </div>
+            <section>
+              <h2>Naqd savdo tushumi</h2>
+              <strong>{cashMoney(data.salesTotal, "cash_uzs")}</strong>
+              <p>
+                To‘liq to‘langan savdolar. Kassa qoldig‘i yoki sof foyda emas.
+              </p>
+            </section>
           </>
         ) : null}
         {tab === "inventory" ? (

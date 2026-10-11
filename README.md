@@ -28,11 +28,11 @@ Texnik yordamchi uchun: Node.js 22+, PostgreSQL 17 va bo‘sh ma’lumotlar baza
 
 Eksportda Kassa qoldiqlari va Kassa daftari ham bor. Hamyonlar alohida ko‘rsatiladi, noma’lum qoldiq nolga aylantirilmaydi. Kassa summalari aniq qiymatni saqlash uchun valyutasi bilan matn shaklida yoziladi; ular Excelda avtomatik yig‘iladigan son emas. Asl harakat, bekor qilish yozuvi, sabab, manba ID, muallif va yozilgan vaqt saqlanadi. Barcha varaqlar bir xil baza holatidan olinadi.
 
-Filialni tanlab, **Excel hisobotini yuklash** havolasini bosing. `.xlsx` faylda Ma’lumot, Ombor, Nasiya, To‘lovlar, Qarzdorlar, Kassa qoldiqlari va Kassa daftari varaqlari bor. Tanlangan filialning barcha yozuvlari olinadi; ekrandagi qidiruv, sana yoki sahifa filtrlari eksportga qo‘llanmaydi. Kassir va kuzatuvchi ham o‘zi o‘qishga ruxsatli filial hisobotini yuklay oladi.
+Filialni tanlab, **Excel hisobotini yuklash** havolasini bosing. `.xlsx` faylda Ma’lumot, Ombor, Nasiya, To‘lovlar, Qarzdorlar, Kassa qoldiqlari, Kassa daftari va Naqd savdo varaqlari bor. Tanlangan filialning barcha yozuvlari olinadi; ekrandagi qidiruv, sana yoki sahifa filtrlari eksportga qo‘llanmaydi. Kassir va kuzatuvchi ham o‘zi o‘qishga ruxsatli filial hisobotini yuklay oladi.
 
 IMEI matn, UZS summalari son sifatida saqlanadi. Sana va kechikish qoidasi faylda yoziladi. Bu qiymatlar nusxasi; formula, makros, parol yoki sessiya ma’lumotlari yo‘q. Barcha varaqlar bazaning bir xil holatidan olinadi. Yuklangan faylni faqat vakolatli odamga bering; dastur uni GitHubga yoki boshqa servisga yubormaydi.
 
-Har bir Ombor/Nasiya/To‘lovlar/Kassa daftari ro‘yxati 10 000 yozuvgacha. Limitdan oshganda eksport to‘liq rad qilinadi, yozuvlar kesilmaydi. Katta hajmli eksport va to‘liq Excel/Kassa mosligi auditi hali mavjud emas.
+Har bir Ombor/Nasiya/To‘lovlar/Kassa daftari/Naqd savdo ro‘yxati 10 000 yozuvgacha. Limitdan oshganda eksport to‘liq rad qilinadi, yozuvlar kesilmaydi. Katta hajmli eksport va to‘liq Excel/Kassa mosligi auditi hali mavjud emas.
 
 ## Qidiruv va shartnoma tafsilotlari
 
@@ -113,7 +113,7 @@ Yangilaganda `npm run migrate` bajaring: `003_cash.sql` kassa jadvallarini yarat
 - Yangi nasiya boshlang‘ich va keyingi to‘lovlari tanlangan usul bo‘yicha avtomatik yoziladi. Moliyaviy yozuv va kassa yozuvi bir tranzaksiyada saqlanadi. Bir xil kalitli takroriy so‘rov pulni ikki marta yozmaydi.
 - Avvalgi shartnoma/to‘lovlar ko‘chirilmagan. Yangi tushumning sanasi shartnoma jadvali boshlanish sanasi emas, pul kiritilgan kun. Avtomatik tushumni qo‘lda yana yozmang.
 - Omborga qurilma kiritish pul sarflanganini anglatmaydi; haqiqiy xaridga alohida chiqim yozing. USD sentlarda, UZS butun sonlarda saqlanadi. Valyuta kursi va USD o‘tkazmasi mavjud emas.
-- Manfiy balans ogohlantirish bilan ko‘rsatiladi. Filiallararo o‘tkazma, investor qarzi/foydasi va naqd savdo modeli mavjud emas. “Investor kapitali” sababi investorning alohida hisobini yaratmaydi.
+- Manfiy balans ogohlantirish bilan ko‘rsatiladi. Filiallararo o‘tkazma va investor qarzi/foydasi mavjud emas. “Investor kapitali” sababi investorning alohida hisobini yaratmaydi.
 
 ### Xato harakatni bekor qilish
 
@@ -132,5 +132,17 @@ Bekor qilish bir tranzaksiyada bajariladi: to‘lov bekor qilingan deb belgilana
 Bu tarixiy xato yozuvni tuzatish, haqiqiy pulni mijozga qaytarish emas. Kassir va kuzatuvchi bekor qila olmaydi. Boshlang‘ich to‘lovni/shartnomani bekor qilish, bekor qilishni qayta tiklash va Kassa yozuvi bo‘lmagan eski to‘lovlarni tuzatish mavjud emas. Eski yozuvda Kassa bog‘lanishi yo‘qligi ko‘rsatiladi va API tuzatishni rad qiladi; tasdiqlanmagan pul harakati yaratilmaydi.
 
 POST /api/payments/void — JSON branchId, paymentId, requestKey, reason. Sessiya, Origin va filial administratori talab qilinadi; tenant serverdan olinadi. 200 {id}, 400 validatsiya/bog‘lanish/takroriy tuzatish xatosi, 403 ruxsat xatosi. Bir xil kalit va bir xil qiymatli qayta yuborish bir marta bajariladi.
+
+## Naqd savdo
+
+Yangilaganda `npm run migrate` bajaring (`006_cash_sales.sql`). **Naqd savdo** bo‘limida administrator yoki kassir ombordagi qurilmani tanlaydi, butun UZS dagi to‘liq sotuv summasini, tushum hamyonini va ixtiyoriy mijoz belgisini kiritadi. Maxfiy hujjat ma’lumotlarini yozmang. Naqd UZS, Karta (P2P) yoki Hisob raqam qo‘llanadi; USD savdo va bo‘lib to‘lash bu bo‘limga kirmaydi.
+
+Savdo, qurilmaning “Sotilgan” holati va Kassa tushumi bitta tranzaksiyada saqlanadi. Tushumni yana qo‘lda yozmang. Qurilma blokirovkasi bir vaqtda ikki marta yoki ham naqd, ham nasiyaga sotilishini bloklaydi. Bir xil so‘rov kalitli qayta yuborish bir savdo va bir Kassa yozuvini yaratadi. Filial/tenant serverdan tekshiriladi; boshqa filial qurilmasini sotib bo‘lmaydi. Kuzatuvchi faqat tarixni ko‘radi.
+
+Tarix IMEI/model/mijoz belgisi/savdo ID, usul va Toshkent sanalari bo‘yicha qidiriladi, 20 tadan sahifalanadi. Ekrandagi tushum faqat filtrga mos savdolar jami; Dashboarddagi Naqd savdo tushumi barcha filial savdolari jami. Tushum Kassa qoldig‘i yoki sof foyda emas. Excelda alohida Naqd savdo varag‘i va Kassa daftarida savdo ID bor. Eksportdagi Naqd savdo ro‘yxati ham 10 000 yozuv bilan cheklangan; limitdan oshganda butun hisobot rad qilinadi.
+
+V1 da naqd savdoni bekor qilish, qurilmani qaytarish, chegirma/soliq modeli va savdo chekini chop etish yo‘q. Avtomatik savdo tushumini Kassa daftaridan alohida bekor qilish bloklangan; bu ombor va tushumni bir-biridan uzmaslik uchun. Dastlab sun’iy ma’lumotlarda sinang.
+
+POST /api/sales — branchId, inventoryId, requestKey, amount (butun UZS), method (cash/card/transfer), customerLabel (ixtiyoriy). Sessiya, Origin va admin/cashier ruxsati talab qilinadi. 200 {id}, 400 validatsiya/sotilgan qurilma/takroriy kalit xatosi, 403 ruxsat xatosi. GET /erp?branch=<uuid>&tab=sales — savdo va tarix ekrani.
 
 POST /api/cash — branchId, requestKey, action (opening/entry/transfer), wallet, date, amount (matn), actionga tegishli direction/category/note yoki destination. Tenant serverdan olinadi; Origin va filial ruxsati tekshiriladi. Opening faqat administrator uchun. 200 {id}, 400 validatsiya yoki 403 ruxsat xatosi.

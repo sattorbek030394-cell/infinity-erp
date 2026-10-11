@@ -111,6 +111,7 @@ after(async () => {
       "audit_events",
       "cash_entries",
       "payments",
+      "cash_sales",
       "cash_operations",
       "cash_wallets",
       "installments",
@@ -822,6 +823,124 @@ test(
         "To‘lov topilmadi",
       ),
     );
+    // Immediate sales reserve stock and write exactly one linked cash receipt.
+    const sellItemResponse = await post("inventory", {
+      ...input,
+      imei: "666666666666666",
+    });
+    assert.equal(sellItemResponse.status, 200);
+    const sellItem = (await sellItemResponse.json()).id;
+    const saleInput = {
+      branchId: b1,
+      inventoryId: sellItem,
+      amount: 500000,
+      method: "card",
+      requestKey: randomUUID(),
+      customerLabel: "SYNTHETIC CASH SALE",
+    };
+    const sell = async (
+      data: Record<string, unknown> = {},
+      auth = cookie,
+      source = origin,
+    ) =>
+      fetch(origin + "/api/sales", {
+        method: "POST",
+        headers: {
+          cookie: auth,
+          origin: source,
+          "content-type": "application/json",
+        },
+        body: JSON.stringify({ ...saleInput, ...data }),
+      });
+    for (const auth of ["", viewerCookie, outsiderCookie])
+      assert.equal((await sell({}, auth)).status, 403);
+    assert.equal((await sell({ branchId: b3 })).status, 403);
+    assert.equal((await sell({ branchId: b2 })).status, 400);
+    assert.equal((await sell({}, cookie, "https://evil.invalid")).status, 400);
+    assert.equal((await sell({ tenantId: tenant })).status, 400);
+    for (const amount of [true, "1e3", 0, -1, 1.5])
+      assert.equal((await sell({ amount })).status, 400);
+    const saleReplay = await Promise.all([sell(), sell()]);
+    assert.deepEqual(
+      saleReplay.map((r) => r.status),
+      [200, 200],
+    );
+    const saleId = (await saleReplay[0].json()).id;
+    assert.equal((await saleReplay[1].json()).id, saleId);
+    assert.equal((await sell({ amount: 500001 })).status, 400);
+    assert.equal((await sell({ requestKey: randomUUID() })).status, 400);
+    assert.equal(
+      (await post("contracts", { ...terms, inventoryId: sellItem })).status,
+      400,
+      "sold cash item cannot become installment contract",
+    );
+    assert.equal(
+      (await pool.query("SELECT status FROM inventory WHERE id=$1", [sellItem]))
+        .rows[0].status,
+      "sold",
+    );
+    const saleReceipt = (
+      await pool.query("SELECT * FROM cash_entries WHERE sale_id=$1", [saleId])
+    ).rows;
+    assert.equal(saleReceipt.length, 1);
+    assert.equal(saleReceipt[0].wallet, "card_uzs");
+    assert.equal(Number(saleReceipt[0].amount_minor), 500000);
+    assert.equal(
+      (await reverse({ branchId: b1, entryId: saleReceipt[0].id })).status,
+      400,
+      "cash sale receipt cannot be cancelled as a manual journal entry",
+    );
+    const salesHtml = await get(
+      base + "&tab=sales&q=666666666666666",
+      viewerCookie,
+    );
+    assert.ok(body(salesHtml).includes("SYNTHETIC CASH SALE"));
+    assert.ok(!salesHtml.includes("Sotish va Kassaga yozish"));
+    assert.ok(
+      !body(await get("/erp?branch=" + b2 + "&tab=sales")).includes(
+        "666666666666666",
+      ),
+    );
+    assert.ok(
+      body(
+        await get(base + "&tab=sales&q=666666666666666&method=cash"),
+      ).includes("Savdo topilmadi"),
+    );
+    assert.ok(
+      body(
+        await get(base + "&tab=sales&q=666666666666666&to=2020-01-01"),
+      ).includes("Savdo topilmadi"),
+    );
+    const salesExport = await fetch(origin + "/api/export?branch=" + b1, {
+      headers: { cookie: viewerCookie },
+    });
+    assert.equal(salesExport.status, 200);
+    const saleBytes = Buffer.from(await salesExport.arrayBuffer());
+    assert.ok(saleBytes.includes(Buffer.from("Naqd savdo")));
+    assert.ok(saleBytes.includes(Buffer.from(saleId)));
+    const raceItemResponse = await post("inventory", {
+      ...input,
+      imei: "888888888888888",
+    });
+    assert.equal(raceItemResponse.status, 200);
+    const raceItem = (await raceItemResponse.json()).id;
+    const reservationRace = await Promise.all([
+      sell({ inventoryId: raceItem, requestKey: randomUUID() }),
+      post("contracts", { ...terms, inventoryId: raceItem }),
+    ]);
+    assert.deepEqual(reservationRace.map((r) => r.status).sort(), [200, 400]);
+    assert.equal(
+      Number(
+        (
+          await pool.query(
+            "SELECT (SELECT count(*) FROM cash_sales WHERE inventory_id=$1)+(SELECT count(*) FROM contracts WHERE inventory_id=$1) n",
+            [raceItem],
+          )
+        ).rows[0].n,
+      ),
+      1,
+      "only one type of sale can reserve a device",
+    );
     // Corrections must update debt and the linked cash receipt together.
     const correctionItemResponse = await post("inventory", {
       ...input,
@@ -1106,6 +1225,27 @@ test(
     const staff = (await created.json()).id;
     extraUsers.push(staff);
     const staffCookie = await login(staffEmail);
+    const staffSellItemResponse = await post(
+      "inventory",
+      { ...input, imei: "999999999999999" },
+      b1,
+      staffCookie,
+    );
+    assert.equal(staffSellItemResponse.status, 200);
+    const staffSellItem = (await staffSellItemResponse.json()).id;
+    assert.equal(
+      (
+        await sell(
+          {
+            inventoryId: staffSellItem,
+            method: "transfer",
+            requestKey: randomUUID(),
+          },
+          staffCookie,
+        )
+      ).status,
+      200,
+    );
     assert.equal(
       (await voidPay({ paymentId: correctionSecond }, staffCookie)).status,
       403,
@@ -1186,6 +1326,10 @@ test(
       200,
     );
     const blocked = await get(base + "&tab=inventory", staffCookie);
+    assert.equal(
+      (await sell({ requestKey: randomUUID() }, staffCookie)).status,
+      403,
+    );
     assert.equal((await cash({}, staffCookie)).status, 403);
     assert.equal(
       (

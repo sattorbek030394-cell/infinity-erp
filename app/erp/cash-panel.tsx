@@ -88,9 +88,11 @@ export function CashPanel({
               </td>
               <td>
                 {e.note ||
-                  (e.payment_id || e.contract_id
-                    ? "Nasiya • avtomatik"
-                    : "Qo‘lda yozilgan")}
+                  (e.sale_id
+                    ? "Naqd savdo • avtomatik"
+                    : e.payment_id || e.contract_id
+                      ? "Nasiya • avtomatik"
+                      : "Qo‘lda yozilgan")}
                 {e.reversed ? <small>Bekor qilingan</small> : null}
                 {role === "admin" &&
                 e.operation_id &&

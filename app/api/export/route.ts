@@ -63,7 +63,7 @@ export async function GET(request: Request) {
       ).rows;
       const cashEntries = (
         await c.query(
-          `SELECT e.id,e.wallet,e.entry_date::text,e.amount_minor::text,e.category,e.note,e.payment_id,e.contract_id,e.operation_id,e.reversal_of,
+          `SELECT e.id,e.wallet,e.entry_date::text,e.amount_minor::text,e.category,e.note,e.payment_id,e.contract_id,e.sale_id,e.operation_id,e.reversal_of,
  EXISTS(SELECT 1 FROM cash_entries r WHERE r.reversal_of=e.id) reversed,
  to_char(e.created_at AT TIME ZONE 'Asia/Tashkent','YYYY-MM-DD HH24:MI:SS') recorded_at,u.email author
  FROM cash_entries e JOIN users u ON u.id=e.user_id WHERE e.tenant_id=$1 AND e.branch_id=$2 ORDER BY e.entry_date,e.created_at,e.id LIMIT 10001`,
@@ -82,8 +82,14 @@ export async function GET(request: Request) {
           [...args, branchInfo.today],
         )
       ).rows;
+      const sales = (
+        await c.query(
+          `SELECT sale.id,sale.customer_label,sale.amount,sale.method,i.model,i.imei,u.email author,to_char(sale.created_at AT TIME ZONE 'Asia/Tashkent','YYYY-MM-DD HH24:MI:SS') sale_time FROM cash_sales sale JOIN inventory i ON i.id=sale.inventory_id AND i.tenant_id=sale.tenant_id AND i.branch_id=sale.branch_id JOIN users u ON u.id=sale.user_id WHERE sale.tenant_id=$1 AND sale.branch_id=$2 ORDER BY sale.created_at,sale.id LIMIT 10001`,
+          args,
+        )
+      ).rows;
       if (
-        [inventory, contracts, payments, cashEntries].some(
+        [inventory, contracts, payments, cashEntries, sales].some(
           (r) => r.length > 10000,
         )
       )
@@ -100,6 +106,7 @@ export async function GET(request: Request) {
         arrears,
         cashBalances,
         cashEntries,
+        sales,
       };
     });
     const bytes = await exportWorkbook(data);
