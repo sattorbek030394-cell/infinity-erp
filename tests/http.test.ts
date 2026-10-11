@@ -2398,3 +2398,132 @@ test(
     );
   },
 );
+
+test(
+  "HTTP: qora ro'yxat va mijoz limiti",
+  { skip: !connection },
+  async () => {
+    const auth = await login(admin + "@example.invalid");
+    const kassirAuth = await login(kassir + "@example.invalid");
+    const device = async (imei: string) =>
+      (
+        await (
+          await post(
+            "inventory",
+            { imei, model: "SYNTHETIC LIMIT", cost: 9_000_000 },
+            b1,
+            auth,
+          )
+        ).json()
+      ).id as string;
+    const pnfl = "6" + String(Date.now()).slice(-13);
+    const mijoz = {
+      customerName: "SYNTHETIC LIMIT mijoz",
+      pnfl,
+      downPayment: 0,
+      months: 6,
+      monthlyRateBp: 500,
+      startDate: "2026-09-25",
+    };
+    const shartnoma = (priceUzs: number, extra: Record<string, unknown>) =>
+      post("contracts", { ...mijoz, priceUzs, ...extra }, b1, auth);
+    // Birinchi ikkita shartnoma chegara ichida: har biri 5 mln narx,
+    // ustama bilan 6.5 mln qarz - jami 13 mln, chegara 25 mln.
+    for (const imei of ["511111111111111", "522222222222222"])
+      assert.equal(
+        (await shartnoma(5_000_000, { inventoryId: await device(imei) }))
+          .status,
+        200,
+      );
+    const customerId = (
+      await pool.query("SELECT id FROM customers WHERE pnfl=$1", [pnfl])
+    ).rows[0].id;
+    // Uchinchisi faol shartnoma chegarasidan oshadi.
+    const uchinchi = await shartnoma(5_000_000, {
+      inventoryId: await device("533333333333333"),
+    });
+    assert.equal(uchinchi.status, 400);
+    // Rahbar sabab yozsa o'tadi va shartnomada kim ruxsat bergani qoladi.
+    const ruxsat = await shartnoma(5_000_000, {
+      inventoryId: await device("544444444444444"),
+      limitOverrideReason: "Eski mijoz, hamma to‘lovni vaqtida qilgan",
+    });
+    assert.equal(ruxsat.status, 200);
+    const uchinchiRow = (
+      await pool.query("SELECT * FROM contracts WHERE id=$1", [
+        (await ruxsat.json()).id,
+      ])
+    ).rows[0];
+    assert.equal(uchinchiRow.limit_override_by, admin);
+    assert.ok(uchinchiRow.limit_override_reason.includes("Eski mijoz"));
+
+    // Qora ro'yxat: faqat rahbar qo'sha oladi.
+    const block = (body: Record<string, unknown>, cookie = auth) =>
+      fetch(origin + "/api/customers/block", {
+        method: "POST",
+        headers: { cookie, origin, "content-type": "application/json" },
+        body: JSON.stringify({ branchId: b1, customerId, ...body }),
+      });
+    assert.equal(
+      (await block({ action: "block", reason: "Sinov" })).status,
+      400,
+      "sabab kamida 5 belgi",
+    );
+    assert.equal(
+      (
+        await block(
+          { action: "block", reason: "To‘lovni uzoq kechiktirdi" },
+          await login(viewer + "@example.invalid"),
+        )
+      ).status,
+      403,
+    );
+    assert.equal(
+      (await block({ action: "block", reason: "To‘lovni uzoq kechiktirdi" }))
+        .status,
+      200,
+    );
+    // Qora ro'yxatdagi mijozga nasiya berilmaydi - rahbar ham bera olmaydi.
+    const bloklangan = await shartnoma(5_000_000, {
+      inventoryId: await device("555555555555555"),
+      limitOverrideReason: "Baribir beramiz",
+    });
+    assert.equal(bloklangan.status, 400);
+    // Ro'yxatdan chiqarilsa yana ishlaydi.
+    assert.equal((await block({ action: "unblock" })).status, 200);
+    assert.equal(
+      (
+        await shartnoma(5_000_000, {
+          inventoryId: await device("566666666666666"),
+          limitOverrideReason: "Ro‘yxatdan chiqarildi, davom etamiz",
+        })
+      ).status,
+      200,
+    );
+    // Kassir limitdan oshira olmaydi.
+    assert.equal(
+      (
+        await post(
+          "contracts",
+          {
+            ...mijoz,
+            inventoryId: await device("577777777777777"),
+            priceUzs: 5_000_000,
+            limitOverrideReason: "Kassir o‘zi ruxsat bermoqchi",
+          },
+          b1,
+          kassirAuth,
+        )
+      ).status,
+      400,
+    );
+    // Qarzdorlar ekranida kechikish guruhlari va zaxira ko'rinadi.
+    const html = await (
+      await fetch(origin + "/erp?branch=" + b1 + "&tab=arrears&status=all", {
+        headers: { cookie: auth },
+      })
+    ).text();
+    for (const k of ["1-30 kun", "31-60 kun", "61-90 kun", "91+ kun", "Zaxira (5%)"])
+      assert.ok(html.includes(k), "topilmadi: " + k);
+  },
+);

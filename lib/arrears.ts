@@ -13,5 +13,14 @@ export async function readArrears(branchId: string) {
     s.branch_id,
     today,
   ]);
-  return { today, rows: result.rows };
+  // Zaxira foizi: kutilayotgan qaytmaydigan qarz (taklif 3.3).
+  const reserveBp = Number(
+    (
+      await db.query(
+        "SELECT reserve_bp FROM nasiya_settings WHERE tenant_id=$1 AND branch_id=$2",
+        [s.tenant_id, s.branch_id],
+      )
+    ).rows[0]?.reserve_bp ?? 500,
+  );
+  return { today, rows: result.rows, reserveBp };
 }

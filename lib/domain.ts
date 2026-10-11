@@ -48,6 +48,8 @@ export const contractSchema = z
     months: z.coerce.number().int().min(1).max(36),
     monthlyRateBp: ixtiyoriy(rateBp),
     startDate: z.iso.date(),
+    // Mijoz limitidan oshsa rahbar sababini yozib o'tkazadi (taklif 3.1).
+    limitOverrideReason: ixtiyoriy(z.string().trim().min(5).max(160)),
   })
   .refine((v) => v.customerName || v.customerLabel, {
     message: "Mijoz ismini yozing",
@@ -118,7 +120,10 @@ export type Amal =
   | "sale.create"
   | "cash.entry"
   | "cash.reverse"
-  | "settings.write";
+  | "settings.write"
+  // Mijoz limitidan oshirib shartnoma tuzish va qora ro'yxatni boshqarish
+  | "limit.override"
+  | "customer.block";
 
 // Kichik do'kon haqiqati: kassir ayni paytda sotuvchi va omborchi ham.
 // Omborchi/sotuvchi rollari ajratilganda ularning huquqi shu jadvalda
@@ -137,6 +142,8 @@ const HUQUQLAR: Record<Rol, Amal[]> = {
     "cash.entry",
     "cash.reverse",
     "settings.write",
+    "limit.override",
+    "customer.block",
   ],
   manager: [
     "read",
@@ -150,6 +157,8 @@ const HUQUQLAR: Record<Rol, Amal[]> = {
     "sale.create",
     "cash.entry",
     "cash.reverse",
+    "limit.override",
+    "customer.block",
   ],
   cashier: [
     "read",

@@ -176,6 +176,10 @@ export function RecordForm({
             />
           </label>
           {field("startDate", "Boshlanish sanasi", "date")}
+          {ixtiyoriy(
+            "limitOverrideReason",
+            "Limitdan oshsa: rahbar sababi",
+          )}
           {hisob ? (
             <p className="hisob">
               Asosiy qarz <strong>{money(hisob.principal)}</strong> · Ustama{" "}

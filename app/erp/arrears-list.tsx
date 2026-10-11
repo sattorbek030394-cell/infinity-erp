@@ -27,7 +27,7 @@ export function ArrearsList({
   filters,
   all,
 }: {
-  report: { today: string; rows: Record<string, any>[] };
+  report: { today: string; rows: Record<string, any>[]; reserveBp: number };
   branch: string;
   filters: HistoryFilters;
   all: boolean;
@@ -36,6 +36,30 @@ export function ArrearsList({
     (r) =>
       (all || Number(r.overdue) > 0) &&
       matchesSearch(filters.q, r.customer_label, r.id, r.model, r.imei),
+  );
+  // COL-02: kechikish guruhlari butun portfel bo'yicha, filtrdan qat'i nazar.
+  const guruhlar = [
+    { nom: "1-30 kun", lo: 1, hi: 30 },
+    { nom: "31-60 kun", lo: 31, hi: 60 },
+    { nom: "61-90 kun", lo: 61, hi: 90 },
+    { nom: "91+ kun", lo: 91, hi: Infinity },
+  ].map((g) => {
+    const b = report.rows.filter(
+      (r) =>
+        Number(r.overdue) > 0 &&
+        Number(r.days_late) >= g.lo &&
+        Number(r.days_late) <= g.hi,
+    );
+    return {
+      nom: g.nom,
+      soni: b.length,
+      summa: b.reduce((n, r) => n + Number(r.overdue), 0),
+    };
+  });
+  const zaxira = Math.round(
+    (report.rows.reduce((n, r) => n + Number(r.balance), 0) *
+      report.reserveBp) /
+      10000,
   );
   const pages = Math.max(1, Math.ceil(found.length / 20)),
     page = Math.min(filters.page, pages);
@@ -58,6 +82,23 @@ export function ArrearsList({
         yozuvlarni o‘zgartirmaydi; jarima hisoblanmaydi. Excel mosligi
         tasdiqlanmagan.
       </aside>
+      <div className="cards">
+        {guruhlar.map((g) => (
+          <section key={g.nom}>
+            <h2>{g.nom}</h2>
+            <strong>{money(g.summa)}</strong>
+            <p>{g.soni} ta shartnoma</p>
+          </section>
+        ))}
+        <section>
+          <h2>Zaxira ({report.reserveBp / 100}%)</h2>
+          <strong>{money(zaxira)}</strong>
+          <p>
+            Portfeldan kutilayotgan qaytmaydigan qarz. Hisob emas, ogohlantirish
+            ko‘rsatkichi.
+          </p>
+        </section>
+      </div>
       <form className="searchbar" action="/erp" method="get">
         <input type="hidden" name="branch" value={branch} />
         <input type="hidden" name="tab" value="arrears" />

@@ -11,6 +11,8 @@ import {
 import { RecordForm } from "../../record-form";
 import { can } from "../../../../lib/domain";
 import { readClosure } from "../../../../lib/closure";
+import { readCustomer } from "../../../../lib/customer";
+import { CustomerPanel } from "../../customer-panel";
 import { ClosurePanel } from "../../closure-panel";
 import { PaymentHistory } from "../../payment-history";
 export const dynamic = "force-dynamic";
@@ -46,6 +48,7 @@ export default async function ContractPage({
   };
   const history = await readPaymentHistory(branch, filters, id);
   const closure = await readClosure(branch, id);
+  const mijoz = c.customer_id ? await readCustomer(branch, c.customer_id) : null;
   return (
     <>
       <header>
@@ -78,6 +81,13 @@ export default async function ContractPage({
         <aside className="notice">
           Excel va Kassa hisob-kitoblariga moslik auditdan o‘tmagan.
         </aside>
+        {mijoz ? (
+          <CustomerPanel
+            branchId={branch}
+            mijoz={mijoz}
+            canBlock={can(detail.role, "customer.block")}
+          />
+        ) : null}
         <section className="detailsection">
           <h2>Qurilma va shartnoma</h2>
           <dl>

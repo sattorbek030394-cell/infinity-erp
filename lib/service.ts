@@ -134,6 +134,79 @@ async function mijozYoz(c: Pick<PoolClient, "query">, s: Scope, v: Shartnoma) {
   return r.rows[0].id as string;
 }
 
+/**
+ * Nasiya berish qarori: qora ro'yxat va mijoz limiti (taklif 3.1).
+ *
+ * Limit raqamlari filial sozlamasidan olinadi; sozlama bo'lmasa haqiqiy
+ * ma'lumot tahlilidan chiqqan qiymatlar ishlatiladi: 2 ta faol shartnoma,
+ * 25 mln so'm qoldiq, qattiq chegara 40 mln.
+ *
+ * Limitdan oshsa rahbar sabab yozib o'tkaza oladi; qattiq chegaradan
+ * oshsa hech kim o'tkaza olmaydi. Qora ro'yxatdagi mijozga nasiya
+ * berilmaydi - uni avval ro'yxatdan chiqarish kerak.
+ *
+ * @returns limitdan oshirilgan bo'lsa sabab, aks holda null
+ */
+async function limitTekshir(
+  c: Pick<PoolClient, "query">,
+  s: Scope,
+  customerId: string,
+  yangiQarz: number,
+  v: Shartnoma,
+) {
+  const mijoz = (
+    await c.query(
+      "SELECT full_name,blocked_at,blocked_reason FROM customers WHERE id=$1 AND tenant_id=$2 FOR UPDATE",
+      [customerId, s.tenant_id],
+    )
+  ).rows[0];
+  if (mijoz?.blocked_at)
+    throw new Error(
+      `Mijoz qora ro'yxatda: ${mijoz.blocked_reason}. Nasiya berilmaydi.`,
+    );
+  const sozlama = (
+    await c.query(
+      "SELECT max_active_contracts,max_exposure,hard_exposure FROM nasiya_settings WHERE tenant_id=$1 AND branch_id=$2",
+      [s.tenant_id, s.branch_id],
+    )
+  ).rows[0];
+  const maxSoni = Number(sozlama?.max_active_contracts ?? 2);
+  const maxQarz = Number(sozlama?.max_exposure ?? 25_000_000);
+  const qattiq = Number(sozlama?.hard_exposure ?? 40_000_000);
+  // Mijozning barcha filiallardagi faol qarzi - bir mijoz ikkinchi
+  // do'kondan ham olishi mumkin.
+  const holat = (
+    await c.query(
+      `SELECT count(*) n, COALESCE(sum(q.qarz),0) qarz FROM (
+ SELECT ${qarzSql()} qarz FROM contracts c
+ WHERE c.tenant_id=$1 AND c.customer_id=$2) q WHERE q.qarz>0`,
+      [s.tenant_id, customerId],
+    )
+  ).rows[0];
+  const soni = Number(holat.n),
+    qarz = Number(holat.qarz),
+    jami = qarz + yangiQarz;
+  const sabablar: string[] = [];
+  if (soni >= maxSoni)
+    sabablar.push(`${soni} ta faol shartnomasi bor (chegara ${maxSoni})`);
+  if (jami > maxQarz)
+    sabablar.push(
+      `jami qarzi ${(jami / 1e6).toFixed(1)} mln bo'ladi (chegara ${(maxQarz / 1e6).toFixed(0)} mln)`,
+    );
+  if (!sabablar.length) return null;
+  if (jami > qattiq)
+    throw new Error(
+      `Mijozning jami qarzi ${(jami / 1e6).toFixed(1)} mln bo'ladi - qattiq chegara ${(qattiq / 1e6).toFixed(0)} mln dan oshadi. Shartnoma tuzilmaydi.`,
+    );
+  if (!v.limitOverrideReason)
+    throw new Error(
+      `Mijoz limiti: ${sabablar.join(", ")}. Davom etish uchun rahbar sabab yozib tasdiqlashi kerak.`,
+    );
+  if (!can(s.role, "limit.override"))
+    throw new Error("Limitdan oshirishga faqat rahbar ruxsat bera oladi");
+  return v.limitOverrideReason;
+}
+
 async function writeRecord(
   c: Pick<PoolClient, "query">,
   s: Scope,
@@ -156,14 +229,18 @@ async function writeRecord(
     if (!item.rowCount) throw new Error("Mahsulot mavjud emas");
     const { total, principal, markup, bp } = await nasiyaShartlari(c, s, v);
     const customerId = v.customerName ? await mijozYoz(c, s, v) : null;
+    const override = customerId
+      ? await limitTekshir(c, s, customerId, principal + markup, v)
+      : null;
     // Shartnoma raqami Excel'dagi kabi ketma-ket. Ikki kassir bir vaqtda
     // tuzsa, UNIQUE(tenant_id,number) ikkinchisini rad etadi - qayta
     // yuborilganda keyingi raqamni oladi.
     await c.query(
       `INSERT INTO contracts(id,tenant_id,branch_id,inventory_id,customer_id,customer_label,number,
- total,down_payment,principal,markup,monthly_rate_bp,months,start_date)
+ total,down_payment,principal,markup,monthly_rate_bp,months,start_date,
+ limit_override_by,limit_override_reason)
  VALUES($1,$2,$3,$4,$5,$6,(SELECT COALESCE(max(number),0)+1 FROM contracts WHERE tenant_id=$2),
- $7,$8,$9,$10,$11,$12,$13)`,
+ $7,$8,$9,$10,$11,$12,$13,$14,$15)`,
       [
         id,
         s.tenant_id,
@@ -178,6 +255,8 @@ async function writeRecord(
         bp,
         v.months,
         v.startDate,
+        override ? s.userId : null,
+        override,
       ],
     );
     for (const p of schedule(total, v.downPayment, v.months, v.startDate))
