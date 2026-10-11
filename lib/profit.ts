@@ -1,7 +1,7 @@
 import { scope } from "./auth";
 import { db } from "./db";
 import { can } from "./domain";
-import { qarzSql } from "./qarz-sql";
+import { qarzSql, tolanganSql } from "./qarz-sql";
 import { readTargets, METRICS, type Metric } from "./targets";
 
 /**
@@ -234,6 +234,35 @@ export async function readProfit(branchId: string, oyRaw: string, oylar = 6) {
     };
   });
 
+  // Telegram xulosasi uchun bugungi tushum va kechikkan qarz.
+  // Qoplangan summa qarzdorlar ekranidagi bilan bir xil hisoblanadi:
+  // tasdiqlangan to'lovlar va erta yopishda bekor qilingan ustama.
+  const qoplangan =
+    tolanganSql() +
+    "+COALESCE((SELECT sum(x.markup_cancelled) FROM contract_closures x" +
+    " WHERE x.contract_id=c.id AND x.status='completed'),0)";
+  const bugungi = (
+    await db.query(
+      `SELECT COALESCE(sum(p.amount),0) summa,count(*) soni FROM payments p
+ WHERE p.tenant_id=$1 AND p.branch_id=$2 AND p.status='approved' AND p.voided_at IS NULL
+ AND (p.created_at AT TIME ZONE 'Asia/Tashkent')::date=$3::date`,
+      [...args, bugun],
+    )
+  ).rows[0];
+  const kechikkan = (
+    await db.query(
+      `WITH j AS (
+ SELECT s.contract_id,sum(s.amount) jami FROM installments s
+ JOIN contracts c ON c.id=s.contract_id AND c.tenant_id=$1 AND c.branch_id=$2
+ WHERE s.due_date<$3::date GROUP BY 1)
+ SELECT COALESCE(sum(GREATEST(j.jami-${qoplangan},0)),0) summa,
+ count(*) FILTER (WHERE j.jami>${qoplangan}) soni
+ FROM contracts c JOIN j ON j.contract_id=c.id
+ WHERE c.tenant_id=$1 AND c.branch_id=$2`,
+      [...args, bugun],
+    )
+  ).rows[0];
+
   // Sotuvchi va kanal natijalari (TZ REP). Nasiya va naqd alohida
   // hisoblanadi, keyin bitta qatorga birlashtiriladi.
   const kesim = async (ustun: "seller" | "channel") => {
@@ -326,6 +355,14 @@ export async function readProfit(branchId: string, oyRaw: string, oylar = 6) {
     qolganKun,
     sotuvchilar,
     kanallar,
+    bugungi: {
+      summa: Number(bugungi.summa),
+      soni: Number(bugungi.soni),
+    },
+    kechikkan: {
+      summa: Number(kechikkan.summa),
+      soni: Number(kechikkan.soni),
+    },
     ombor,
     portfel,
     canEdit: can(s.role, "target.write"),

@@ -3392,3 +3392,34 @@ test(
     assert.ok(html.includes("ko‘rsatilmagan"));
   },
 );
+
+test(
+  "HTTP: Telegram uchun tayyor matn",
+  { skip: !connection },
+  async () => {
+    const oy = (
+      await pool.query(
+        "SELECT to_char((now() AT TIME ZONE 'Asia/Tashkent')::date,'YYYY-MM') oy",
+      )
+    ).rows[0].oy;
+    const html = await (
+      await fetch(origin + "/erp?branch=" + b3 + "&tab=profit&oy=" + oy, {
+        headers: { cookie: outsiderCookie },
+      })
+    ).text();
+    assert.ok(html.includes("Telegram uchun tayyor matn"));
+    assert.ok(html.includes("Matnni nusxalash"));
+    for (const satr of [
+      "Infinity —",
+      "Sotuv:",
+      "Sof foyda:",
+      "Bugungi to&#x27;lovlar:",
+      "Nasiya qoldig&#x27;i:",
+      "Kechikkan:",
+      "Omborda:",
+    ])
+      assert.ok(html.includes(satr), "matnda yo‘q: " + satr);
+    // Reja qo'yilgan bo'lsa bajarilish foizi ham matnga kiradi.
+    assert.ok(html.includes("rejasi:"));
+  },
+);

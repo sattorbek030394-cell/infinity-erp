@@ -2,6 +2,8 @@ import { money } from "../../lib/filters";
 import { cashMoney } from "../../lib/cash-domain";
 import type { readProfit } from "../../lib/profit";
 import { TargetForm } from "./target-form";
+import { TelegramText } from "./telegram-text";
+import { METRIC_NOMI } from "../../lib/targets";
 
 const OYLAR = [
   "yanvar",
@@ -29,6 +31,38 @@ const oyNomi = (oy: string) => {
  * ko'rsatkich qayerdan chiqqani yoniga yozilgan, chunki "sof foyda"
  * degan bitta raqamga ishonish uchun uning tarkibi ko'rinishi kerak.
  */
+/** Har kuni guruhga tashlanadigan qisqa xulosa. */
+function telegram(r: Awaited<ReturnType<typeof readProfit>>) {
+  const j = r.joriy;
+  const som = (n: number) => Number(n).toLocaleString("uz-UZ");
+  const kun = r.bugun.split("-").reverse().join(".");
+  const satrlar = [
+    `Infinity — ${kun}`,
+    "",
+    `Sotuv: ${j.nasiyaSoni + j.naqdSoni} dona (nasiya ${j.nasiyaSoni} / naqd ${j.naqdSoni})`,
+    `Sotuv summasi: ${som(j.nasiyaNarx + j.naqdNarx)} so'm`,
+    `Sotuv marjasi: ${som(j.marja)} so'm`,
+    `Nasiya daromadi: ${som(j.ustama)} so'm`,
+    `Xarajat: ${som(j.xarajatUzs + (r.kurs ? Math.round((j.xarajatUsd * r.kurs) / 100) : 0))} so'm`,
+    `Sof foyda: ${som(j.sofFoyda)} so'm`,
+    "",
+    `Bugungi to'lovlar: ${som(r.bugungi.summa)} so'm (${r.bugungi.soni} ta)`,
+    `Nasiya qoldig'i: ${som(r.portfel.qoldiq)} so'm`,
+    `Kechikkan: ${som(r.kechikkan.summa)} so'm (${r.kechikkan.soni} shartnoma)`,
+    `Omborda: ${r.ombor.n} dona, tannarxi ${som(r.ombor.tannarx)} so'm`,
+  ];
+  const reja = r.reja.filter((x) => x.plan > 0);
+  if (reja.length) {
+    satrlar.push("", `${oyNomi(r.oy)} rejasi:`);
+    for (const x of reja)
+      satrlar.push(
+        `  ${METRIC_NOMI[x.metric]}: ${x.foiz}% bajarildi` +
+          (x.kunlik ? `, kunlik kerak ${som(x.kunlik)}` : ""),
+      );
+  }
+  return satrlar.join("\n");
+}
+
 export function ProfitPanel({
   report,
   branch,
@@ -274,6 +308,7 @@ export function ProfitPanel({
           </table>
         </>
       ) : null}
+      <TelegramText text={telegram(report)} />
       <aside className="notice">
         Bu boshqaruv hisobi, rasmiy buxgalteriya foydasi emas. Nasiya
         daromadi to‘lov tushganda tan olinadi, shartnoma tuzilganda emas.
