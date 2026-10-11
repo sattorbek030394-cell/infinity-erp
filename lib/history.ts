@@ -71,7 +71,7 @@ export async function readContract(branchId: string, contractId: string) {
   const s = await scope(branchId);
   const result = await db.query(
     `SELECT c.*,i.model,i.imei,b.name branch_name,
- c.total-c.down_payment-COALESCE((SELECT sum(p.amount) FROM payments p WHERE p.contract_id=c.id AND p.voided_at IS NULL),0) balance
+ c.total-c.down_payment-COALESCE((SELECT sum(p.amount) FROM payments p WHERE p.contract_id=c.id AND p.status='approved' AND p.voided_at IS NULL),0) balance
  FROM contracts c JOIN inventory i ON i.id=c.inventory_id AND i.tenant_id=c.tenant_id AND i.branch_id=c.branch_id
  JOIN branches b ON b.id=c.branch_id AND b.tenant_id=c.tenant_id
  WHERE c.tenant_id=$1 AND c.branch_id=$2 AND c.id=$3`,

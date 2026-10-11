@@ -14,6 +14,7 @@ const tenant = randomUUID(),
   b3 = randomUUID(),
   admin = randomUUID(),
   viewer = randomUUID(),
+  kassir = randomUUID(),
   outsider = randomUUID();
 const pool = new Pool({ connectionString: connection });
 let server: ChildProcess | undefined;
@@ -64,6 +65,7 @@ before(async () => {
   for (const [id, label] of [
     [admin, "admin"],
     [viewer, "viewer"],
+    [kassir, "kassir"],
     [outsider, "outsider"],
   ])
     await pool.query("INSERT INTO users VALUES($1,$2,$3)", [
@@ -72,9 +74,11 @@ before(async () => {
       passwordHash,
     ]);
   await pool.query(
-    "INSERT INTO memberships VALUES($1,$2,$3,'admin'),($1,$2,$4,'admin'),($5,$2,$3,'viewer'),($6,$7,$8,'admin')",
-    [admin, tenant, b1, b2, viewer, outsider, otherTenant, b3],
+    "INSERT INTO memberships VALUES($1,$2,$3,'admin'),($1,$2,$4,'admin'),($5,$2,$3,'viewer'),($6,$7,$8,'admin'),($9,$2,$3,'cashier')",
+    [admin, tenant, b1, b2, viewer, outsider, otherTenant, b3, kassir],
   );
+  // Kassir PAY-06 sinovlari uchun: naqdni tasdiqlaydi, P2P/bankni yo'q.
+  extraUsers.push(kassir);
   server = spawn(
     process.execPath,
     ["node_modules/next/dist/bin/next", "start", "-p", "3100"],
@@ -1623,5 +1627,234 @@ test(
     );
     assert.equal((await print(contract)).status, 403);
     assert.equal((await print(randomUUID(), auth)).status, 404);
+  },
+);
+
+test(
+  "HTTP: PAY-06 to'lovni rol bo'yicha tasdiqlash",
+  { skip: !connection },
+  async () => {
+    const auth = await login(admin + "@example.invalid");
+    const kassirAuth = await login(kassir + "@example.invalid");
+    const koruvchi = await login(viewer + "@example.invalid");
+    const begona = await login(outsider + "@example.invalid");
+    const item = (
+      await (
+        await post(
+          "inventory",
+          { imei: "366666666666666", model: "SYNTHETIC PAY-06", cost: 5_000_000 },
+          b1,
+          auth,
+        )
+      ).json()
+    ).id;
+    const contract = (
+      await (
+        await post(
+          "contracts",
+          {
+            inventoryId: item,
+            customerName: "SYNTHETIC PAY-06 mijoz",
+            priceUzs: 9_000_000,
+            downPayment: 1_000_000,
+            months: 4,
+            monthlyRateBp: 500,
+            startDate: "2026-09-25",
+          },
+          b1,
+          auth,
+        )
+      ).json()
+    ).id;
+    // 8 000 000 asosiy qarz + 1 600 000 ustama
+    const qarz = async () =>
+      Number(
+        (
+          await pool.query(
+            `SELECT c.total-c.down_payment-COALESCE((SELECT sum(p.amount) FROM payments p
+ WHERE p.contract_id=c.id AND p.status='approved' AND p.voided_at IS NULL),0) balance
+ FROM contracts c WHERE c.id=$1`,
+            [contract],
+          )
+        ).rows[0].balance,
+      );
+    const hamyon = async (wallet: string) =>
+      Number(
+        (
+          await pool.query(
+            "SELECT COALESCE(sum(amount_minor),0) n FROM cash_entries WHERE branch_id=$1 AND wallet=$2",
+            [b1, wallet],
+          )
+        ).rows[0].n,
+      );
+    assert.equal(await qarz(), 9_600_000);
+
+    // Kassir naqd qabul qiladi: o'zi javobgar, darhol hisobga kiradi (AT-25).
+    const naqdBefore = await hamyon("cash_uzs");
+    const naqd = await post(
+      "payments",
+      {
+        contractId: contract,
+        amount: 600_000,
+        method: "cash",
+        requestKey: randomUUID(),
+      },
+      b1,
+      kassirAuth,
+    );
+    assert.equal(naqd.status, 200);
+    assert.equal(await qarz(), 9_000_000);
+    assert.equal(await hamyon("cash_uzs"), naqdBefore + 600_000);
+
+    // Karta tushumi: kassir kiritadi, lekin tasdiqlay olmaydi (AT-23).
+    const kartaBefore = await hamyon("card_uzs");
+    const karta = (
+      await (
+        await post(
+          "payments",
+          {
+            contractId: contract,
+            amount: 1_000_000,
+            method: "card",
+            evidence: "SYNTHETIC P2P 12345",
+            requestKey: randomUUID(),
+          },
+          b1,
+          kassirAuth,
+        )
+      ).json()
+    ).id;
+    assert.equal(
+      (await pool.query("SELECT status FROM payments WHERE id=$1", [karta]))
+        .rows[0].status,
+      "pending",
+    );
+    assert.equal(await qarz(), 9_000_000, "tasdiqsiz summa qarzni kamaytirmaydi");
+    assert.equal(await hamyon("card_uzs"), kartaBefore, "hamyonga ham kirmaydi");
+
+    const decide = (body: Record<string, unknown>, cookie = auth) =>
+      fetch(origin + "/api/payments/approve", {
+        method: "POST",
+        headers: { cookie, origin, "content-type": "application/json" },
+        body: JSON.stringify({ branchId: b1, ...body }),
+      });
+    // AT-24: kassir P2Pni tasdiqlashga urinadi - server rad etadi.
+    assert.equal(
+      (await decide({ paymentId: karta, decision: "approve" }, kassirAuth))
+        .status,
+      403,
+    );
+    assert.equal(await qarz(), 9_000_000);
+    // Boshqa filial va tashqi foydalanuvchi ham tegmaydi.
+    assert.equal(
+      (await decide({ paymentId: karta, decision: "approve" }, begona)).status,
+      403,
+    );
+
+    // Rahbar tasdiqlaydi: qarz kamayadi va karta hamyoniga kirim tushadi.
+    assert.equal((await decide({ paymentId: karta, decision: "approve" })).status, 200);
+    assert.equal(await qarz(), 8_000_000);
+    assert.equal(await hamyon("card_uzs"), kartaBefore + 1_000_000);
+    const tasdiq = (
+      await pool.query(
+        "SELECT status,decided_by,decided_at,created_by FROM payments WHERE id=$1",
+        [karta],
+      )
+    ).rows[0];
+    assert.equal(tasdiq.status, "approved");
+    assert.equal(tasdiq.decided_by, admin, "tasdiqlovchi saqlanadi");
+    assert.equal(tasdiq.created_by, kassir, "kirituvchi saqlanadi");
+    assert.ok(tasdiq.decided_at);
+    // Takroriy tasdiq ikkinchi marta pul yaratmaydi.
+    assert.equal((await decide({ paymentId: karta, decision: "approve" })).status, 200);
+    assert.equal(await hamyon("card_uzs"), kartaBefore + 1_000_000);
+    assert.equal(
+      (await decide({ paymentId: karta, decision: "reject", reason: "boshqa qaror" }))
+        .status,
+      400,
+      "tasdiqlangandan keyin rad etib bo'lmaydi",
+    );
+
+    // AT-27: rahbar rad etadi - sabab majburiy, pul va qarz o'zgarmaydi.
+    const rad = (
+      await (
+        await post(
+          "payments",
+          {
+            contractId: contract,
+            amount: 500_000,
+            method: "transfer",
+            requestKey: randomUUID(),
+          },
+          b1,
+          kassirAuth,
+        )
+      ).json()
+    ).id;
+    const bankBefore = await hamyon("bank_uzs");
+    assert.equal((await decide({ paymentId: rad, decision: "reject" })).status, 400);
+    assert.equal(
+      (await decide({ paymentId: rad, decision: "reject", reason: "qisq" })).status,
+      400,
+    );
+    assert.equal(
+      (
+        await decide({
+          paymentId: rad,
+          decision: "reject",
+          reason: "Bankda tushum ko'rinmadi",
+        })
+      ).status,
+      200,
+    );
+    assert.equal(await qarz(), 8_000_000);
+    assert.equal(await hamyon("bank_uzs"), bankBefore);
+    assert.equal(
+      (await pool.query("SELECT decided_reason FROM payments WHERE id=$1", [rad]))
+        .rows[0].decided_reason,
+      "Bankda tushum ko'rinmadi",
+    );
+
+    // Tasdiq kutayotgan tushum bekor qilinmaydi - rad etiladi.
+    const kutayotgan = (
+      await (
+        await post(
+          "payments",
+          {
+            contractId: contract,
+            amount: 300_000,
+            method: "card",
+            requestKey: randomUUID(),
+          },
+          b1,
+          kassirAuth,
+        )
+      ).json()
+    ).id;
+    const bekor = await fetch(origin + "/api/payments/void", {
+      method: "POST",
+      headers: { cookie: auth, origin, "content-type": "application/json" },
+      body: JSON.stringify({
+        branchId: b1,
+        paymentId: kutayotgan,
+        requestKey: randomUUID(),
+        reason: "SYNTHETIC void attempt",
+      }),
+    });
+    assert.equal(bekor.status, 400);
+
+    // Tasdiq ekranida faqat o'z usuli ko'rinadi.
+    const ekran = async (cookie: string) =>
+      await (
+        await fetch(origin + "/erp?branch=" + b1 + "&tab=approvals", {
+          headers: { cookie },
+        })
+      ).text();
+    const rahbarEkran = await ekran(auth);
+    assert.ok(rahbarEkran.includes("SYNTHETIC PAY-06 mijoz"));
+    assert.ok(
+      (await ekran(koruvchi)).includes("tasdiqlash huquqi yo‘q"),
+      "ko'ruvchiga tasdiqlash ro'yxati ko'rsatilmaydi",
+    );
   },
 );

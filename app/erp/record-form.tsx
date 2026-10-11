@@ -188,6 +188,7 @@ export function RecordForm({
             </select>
           </label>
           {field("amount", "To‘lov UZS", "number", 1)}
+          {ixtiyoriy("evidence", "Tranzaksiya raqami / dalil")}
           <label>
             Usul
             <select name="method">

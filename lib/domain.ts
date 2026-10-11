@@ -62,6 +62,9 @@ export const paymentSchema = z.object({
   contractId: z.uuid(),
   amount: money,
   method: z.enum(["cash", "card", "transfer"]),
+  // P2P/bank tushumining dalili: tranzaksiya identifikatori yoki kvitansiya
+  // raqami. Rahbar shu bo'yicha haqiqiy tushumni tekshiradi (PAY-06).
+  evidence: z.string().trim().max(160).default(""),
   requestKey: z.uuid(),
 });
 // Rollar va amallar - texnik topshiriqning 5-bo'limi. Huquq har safar

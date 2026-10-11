@@ -8,6 +8,7 @@ import {
   schedule,
   nasiyaTotals,
   assertPayment,
+  can,
   type Amal,
 } from "./domain";
 import type { z } from "zod";
@@ -193,7 +194,7 @@ async function writeRecord(
       return p.id;
     }
     const sum = await c.query(
-      "SELECT COALESCE(sum(amount),0) paid FROM payments WHERE contract_id=$1 AND voided_at IS NULL",
+      "SELECT COALESCE(sum(amount),0) paid FROM payments WHERE contract_id=$1 AND status='approved' AND voided_at IS NULL",
       [v.contractId],
     );
     assertPayment(
@@ -202,8 +203,17 @@ async function writeRecord(
         Number(contract.rows[0].down_payment) -
         Number(sum.rows[0].paid),
     );
+    // PAY-06: naqdni kassir, P2P/bankni rahbar tasdiqlaydi. Kirituvchining
+    // o'zida shu huquq bo'lsa to'lov darhol hisobga kiradi va tasdiqlovchi
+    // sifatida u yoziladi; bo'lmasa tasdiq kutadi va qarzni kamaytirmaydi.
+    const tasdiq = can(
+      s.role,
+      v.method === "cash" ? "payment.approve.cash" : "payment.approve.transfer",
+    );
     await c.query(
-      "INSERT INTO payments(id,tenant_id,branch_id,contract_id,amount,method,request_key) VALUES($1,$2,$3,$4,$5,$6,$7)",
+      `INSERT INTO payments(id,tenant_id,branch_id,contract_id,amount,method,request_key,
+ evidence,created_by,status,decided_by,decided_at)
+ VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12)`,
       [
         id,
         s.tenant_id,
@@ -212,9 +222,14 @@ async function writeRecord(
         v.amount,
         v.method,
         v.requestKey,
+        v.evidence,
+        s.userId,
+        tasdiq ? "approved" : "pending",
+        tasdiq ? s.userId : null,
+        tasdiq ? new Date() : null,
       ],
     );
-    await postCashReceipt(c, s, id, v.amount, v.method, "payment");
+    if (tasdiq) await postCashReceipt(c, s, id, v.amount, v.method, "payment");
   } else throw new Error("Noto‘g‘ri modul");
   await c.query(
     "INSERT INTO audit_events(user_id,tenant_id,branch_id,action,record_id) VALUES($1,$2,$3,$4,$5)",
@@ -230,7 +245,7 @@ export async function readBranch(branchId: string) {
     args,
   );
   const contracts = await db.query(
-    "SELECT c.*, i.model,i.imei,c.total-c.down_payment-COALESCE((SELECT sum(p.amount) FROM payments p WHERE p.contract_id=c.id AND p.voided_at IS NULL),0) balance FROM contracts c JOIN inventory i ON i.id=c.inventory_id AND i.tenant_id=c.tenant_id AND i.branch_id=c.branch_id WHERE c.tenant_id=$1 AND c.branch_id=$2 ORDER BY start_date DESC,c.id",
+    "SELECT c.*, i.model,i.imei,c.total-c.down_payment-COALESCE((SELECT sum(p.amount) FROM payments p WHERE p.contract_id=c.id AND p.status='approved' AND p.voided_at IS NULL),0) balance FROM contracts c JOIN inventory i ON i.id=c.inventory_id AND i.tenant_id=c.tenant_id AND i.branch_id=c.branch_id WHERE c.tenant_id=$1 AND c.branch_id=$2 ORDER BY start_date DESC,c.id",
     args,
   );
   return {

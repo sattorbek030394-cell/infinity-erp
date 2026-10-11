@@ -47,14 +47,14 @@ export async function GET(request: Request) {
           `SELECT c.id,c.customer_label,i.model,i.imei,c.total,c.down_payment,c.months,c.start_date::text,
  COALESCE(p.paid,0) paid,c.total-c.down_payment-COALESCE(p.paid,0) balance
  FROM contracts c JOIN inventory i ON i.id=c.inventory_id AND i.tenant_id=c.tenant_id AND i.branch_id=c.branch_id
- LEFT JOIN (SELECT contract_id,sum(amount) paid FROM payments WHERE tenant_id=$1 AND branch_id=$2 AND voided_at IS NULL GROUP BY contract_id) p ON p.contract_id=c.id
+ LEFT JOIN (SELECT contract_id,sum(amount) paid FROM payments WHERE tenant_id=$1 AND branch_id=$2 AND status='approved' AND voided_at IS NULL GROUP BY contract_id) p ON p.contract_id=c.id
  WHERE c.tenant_id=$1 AND c.branch_id=$2 ORDER BY c.start_date,c.id LIMIT 10001`,
           args,
         )
       ).rows;
       const payments = (
         await c.query(
-          `SELECT p.id,p.contract_id,c.customer_label,i.imei,p.amount,p.method,p.void_reason,to_char(p.voided_at AT TIME ZONE 'Asia/Tashkent','YYYY-MM-DD HH24:MI:SS') voided_at,u.email voided_by,to_char(p.created_at AT TIME ZONE 'Asia/Tashkent','YYYY-MM-DD HH24:MI:SS') payment_time
+          `SELECT p.id,p.contract_id,c.customer_label,i.imei,p.amount,p.method,p.status,p.void_reason,to_char(p.voided_at AT TIME ZONE 'Asia/Tashkent','YYYY-MM-DD HH24:MI:SS') voided_at,u.email voided_by,to_char(p.created_at AT TIME ZONE 'Asia/Tashkent','YYYY-MM-DD HH24:MI:SS') payment_time
  FROM payments p JOIN contracts c ON c.id=p.contract_id AND c.tenant_id=p.tenant_id AND c.branch_id=p.branch_id
  JOIN inventory i ON i.id=c.inventory_id AND i.tenant_id=c.tenant_id AND i.branch_id=c.branch_id
  LEFT JOIN users u ON u.id=p.voided_by

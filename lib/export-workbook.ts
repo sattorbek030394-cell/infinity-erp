@@ -126,7 +126,13 @@ export async function exportWorkbook(data: ExportData) {
       amount(r.amount),
       r.method === "cash" ? "Naqd" : r.method === "card" ? "Karta" : "O‘tkazma",
       text(r.payment_time),
-      r.voided_at ? "Bekor qilingan — hisobga kirmaydi" : "Faol",
+      r.voided_at
+        ? "Bekor qilingan — hisobga kirmaydi"
+        : r.status === "pending"
+          ? "Tasdiq kutilmoqda — hisobga kirmaydi"
+          : r.status === "rejected"
+            ? "Rad etilgan — hisobga kirmaydi"
+            : "Faol",
       text(r.void_reason),
       text(r.voided_at),
       text(r.voided_by),

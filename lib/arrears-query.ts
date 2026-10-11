@@ -1,7 +1,7 @@
 // Read-only reporting allocation: payments cover the earliest installments first.
 export const arrearsQuery = `WITH scoped AS (
  SELECT c.*,i.model,i.imei,
- COALESCE((SELECT sum(p.amount) FROM payments p WHERE p.contract_id=c.id AND p.tenant_id=c.tenant_id AND p.branch_id=c.branch_id AND p.voided_at IS NULL),0) paid
+ COALESCE((SELECT sum(p.amount) FROM payments p WHERE p.contract_id=c.id AND p.tenant_id=c.tenant_id AND p.branch_id=c.branch_id AND p.status='approved' AND p.voided_at IS NULL),0) paid
  FROM contracts c JOIN inventory i ON i.id=c.inventory_id AND i.tenant_id=c.tenant_id AND i.branch_id=c.branch_id
  WHERE c.tenant_id=$1 AND c.branch_id=$2
 ), scheduled AS (

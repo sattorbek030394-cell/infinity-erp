@@ -34,6 +34,13 @@ export async function voidPayment(raw: unknown) {
       )
     ).rows[0];
     if (!payment) throw new PaymentVoidError("To‘lov topilmadi");
+    // Tasdiq kutayotgan tushum bekor qilinmaydi - u rad etiladi (PAY-06).
+    if (payment.status !== "approved")
+      throw new PaymentVoidError(
+        payment.status === "pending"
+          ? "Bu tushum hali tasdiqlanmagan: uni rad etish kerak"
+          : "Rad etilgan tushumni bekor qilib bo‘lmaydi",
+      );
     await c.query(
       "SELECT id FROM contracts WHERE tenant_id=$1 AND branch_id=$2 AND id=$3 FOR UPDATE",
       [s.tenant_id, s.branch_id, payment.contract_id],
