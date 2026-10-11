@@ -245,8 +245,28 @@ tayanadi). Faqat so'mda ishlaydigan tovar uchun "tannarx UZS" maydoni bor.
 IMEI endi 15 raqam bo'lishi shart emas: Apple seriya raqami (J4RMVWVXVV)
 va noutbuk modeli (15-fd0366nia) ham o'tadi.
 
-To'lov turi hozircha faqat qayd etiladi — kassadan pul chiqishi va yetkazib
-beruvchi qarzi keyingi paketda ulanadi.
+**To'lov turi endi pul harakatini yaratadi:**
+
+| To'lov turi | Nima bo'ladi |
+| --- | --- |
+| Naqd USD | Naqd USD hamyonidan dollar chiqadi |
+| Naqd UZS / Karta / Hisob raqam | Tegishli so'm hamyonidan chiqadi |
+| Qarzga | Yetkazib beruvchi qarzi paydo bo'ladi, kassaga tegmaydi |
+| Investor tovari | Na chiqim, na qarz |
+
+Qarzga olganda yetkazib beruvchi nomi majburiy.
+
+### Ta'minotchilar
+
+Yangi "Ta'minotchilar" bo'limi: jami xarid, qarzga olingan, to'langan va
+qoldiq qarz. "Qarz to'lash" tugmasi majburiyatni kamaytiradi va kassadan
+pul chiqaradi — xarid xarajatini qayta yaratmaydi. Qoldiqdan ortiq to'lov
+kiritilmaydi. USD hamyonidan to'laganda kurs saqlanadi.
+
+⚠️ Excel'dagi eski ta'minotchi qarzlari **ko'chmaydi** — ro'yxat noldan
+boshlanadi. Eski qarzlarni qo'lda kiritish uchun shu summadagi "qarzga"
+kirim yozib, keyin to'lovini kiritish mumkin; yoki varaq tanlab import
+tayyor bo'lguncha Excelda yuritasiz.
 
 Hali yo'q:
 
