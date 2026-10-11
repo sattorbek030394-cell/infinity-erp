@@ -1,7 +1,7 @@
 import { createHash, randomUUID } from "node:crypto";
 import { scope, AccessDeniedError } from "./auth";
 import { db, transaction } from "./db";
-import { saleSchema } from "./sales-schema";
+import { saleSchema, saleVoidSchema } from "./sales-schema";
 import { paymentWallet } from "./cash-domain";
 import type { HistoryFilters } from "./filters";
 export class SaleError extends Error {}
@@ -111,7 +111,8 @@ export async function readSales(branchId: string, filters: HistoryFilters) {
  AND ($4::text IS NULL OR sale.method=$4) AND ($5::date IS NULL OR sale.created_at>=($5::date::timestamp AT TIME ZONE 'Asia/Tashkent')) AND ($6::date IS NULL OR sale.created_at<(($6::date+1)::timestamp AT TIME ZONE 'Asia/Tashkent'))`;
   const summary = (
     await db.query(
-      "SELECT count(*) count,coalesce(sum(sale.amount),0)::text total " + from,
+      "SELECT count(*) count,coalesce(sum(sale.amount) FILTER(WHERE sale.voided_at IS NULL),0)::text total " +
+        from,
       args,
     )
   ).rows[0];
@@ -120,11 +121,120 @@ export async function readSales(branchId: string, filters: HistoryFilters) {
     page = Math.min(filters.page, pages);
   const sales = (
     await db.query(
-      "SELECT sale.id,sale.amount,sale.method,sale.customer_label,sale.created_at,i.model,i.imei " +
+      "SELECT sale.id,sale.amount,sale.method,sale.customer_label,sale.created_at,sale.voided_at,sale.void_reason,i.model,i.imei " +
         from +
         " ORDER BY sale.created_at DESC,sale.id DESC LIMIT 20 OFFSET $7",
       [...args, (page - 1) * 20],
     )
   ).rows;
   return { sales, count, total: summary.total, pages, page, role: s.role };
+}
+export async function voidSale(raw: unknown) {
+  const v = saleVoidSchema.parse(raw),
+    s = await scope(v.branchId, true);
+  return transaction(async (c) => {
+    await c.query(
+      "SELECT id FROM branches WHERE tenant_id=$1 AND id=$2 FOR UPDATE",
+      [s.tenant_id, s.branch_id],
+    );
+    const role = (
+      await c.query(
+        "SELECT role FROM memberships WHERE user_id=$1 AND tenant_id=$2 AND branch_id=$3",
+        [s.userId, s.tenant_id, s.branch_id],
+      )
+    ).rows[0]?.role;
+    if (role !== "admin") throw new AccessDeniedError();
+    const sale = (
+      await c.query(
+        "SELECT * FROM cash_sales WHERE tenant_id=$1 AND branch_id=$2 AND id=$3",
+        [s.tenant_id, s.branch_id, v.saleId],
+      )
+    ).rows[0];
+    if (!sale) throw new SaleError("Savdo topilmadi");
+    const hash = createHash("sha256")
+      .update(JSON.stringify({ action: "sale.void", ...v }))
+      .digest("hex");
+    const prior = (
+      await c.query(
+        "SELECT tenant_id,branch_id,input_hash FROM cash_operations WHERE id=$1",
+        [v.requestKey],
+      )
+    ).rows[0];
+    if (prior) {
+      if (
+        prior.tenant_id !== s.tenant_id ||
+        prior.branch_id !== s.branch_id ||
+        prior.input_hash !== hash
+      )
+        throw new SaleError("Takroriy so‘rov mos emas");
+      return v.saleId;
+    }
+    if (sale.voided_at) throw new SaleError("Savdo avval bekor qilingan");
+    const item = (
+      await c.query(
+        "SELECT id FROM inventory WHERE tenant_id=$1 AND branch_id=$2 AND id=$3 AND status='sold' FOR UPDATE",
+        [s.tenant_id, s.branch_id, sale.inventory_id],
+      )
+    ).rows[0];
+    if (
+      !item ||
+      (
+        await c.query(
+          "SELECT 1 FROM contracts WHERE inventory_id=$1 UNION ALL SELECT 1 FROM cash_sales WHERE inventory_id=$1 AND id<>$2 AND voided_at IS NULL",
+          [sale.inventory_id, sale.id],
+        )
+      ).rowCount
+    )
+      throw new SaleError("Qurilmaning holati savdoga mos emas");
+    const receipt = (
+      await c.query(
+        "SELECT * FROM cash_entries WHERE tenant_id=$1 AND branch_id=$2 AND sale_id=$3 FOR UPDATE",
+        [s.tenant_id, s.branch_id, sale.id],
+      )
+    ).rows[0];
+    if (
+      !receipt ||
+      Number(receipt.amount_minor) !== Number(sale.amount) ||
+      (
+        await c.query("SELECT 1 FROM cash_entries WHERE reversal_of=$1", [
+          receipt.id,
+        ])
+      ).rowCount
+    )
+      throw new SaleError("Kassa bog‘lanishi mos emas");
+    await c.query("INSERT INTO cash_operations VALUES($1,$2,$3,$4)", [
+      v.requestKey,
+      s.tenant_id,
+      s.branch_id,
+      hash,
+    ]);
+    await c.query(
+      "INSERT INTO cash_entries(id,tenant_id,branch_id,wallet,entry_date,amount_minor,category,note,user_id,operation_id,reversal_of) VALUES($1,$2,$3,$4,$5,$6,'Naqd savdoni bekor qilish',$7,$8,$9,$10)",
+      [
+        randomUUID(),
+        s.tenant_id,
+        s.branch_id,
+        receipt.wallet,
+        receipt.entry_date,
+        -Number(sale.amount),
+        v.reason,
+        s.userId,
+        v.requestKey,
+        receipt.id,
+      ],
+    );
+    await c.query(
+      "UPDATE cash_sales SET voided_at=now(),voided_by=$4,void_reason=$5,void_request_key=$6 WHERE tenant_id=$1 AND branch_id=$2 AND id=$3",
+      [s.tenant_id, s.branch_id, sale.id, s.userId, v.reason, v.requestKey],
+    );
+    await c.query(
+      "UPDATE inventory SET status='available' WHERE tenant_id=$1 AND branch_id=$2 AND id=$3",
+      [s.tenant_id, s.branch_id, sale.inventory_id],
+    );
+    await c.query(
+      "INSERT INTO audit_events(user_id,tenant_id,branch_id,action,record_id) VALUES($1,$2,$3,'sale.void',$4)",
+      [s.userId, s.tenant_id, s.branch_id, sale.id],
+    );
+    return sale.id;
+  });
 }

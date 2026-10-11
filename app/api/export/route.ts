@@ -84,7 +84,7 @@ export async function GET(request: Request) {
       ).rows;
       const sales = (
         await c.query(
-          `SELECT sale.id,sale.customer_label,sale.amount,sale.method,i.model,i.imei,u.email author,to_char(sale.created_at AT TIME ZONE 'Asia/Tashkent','YYYY-MM-DD HH24:MI:SS') sale_time FROM cash_sales sale JOIN inventory i ON i.id=sale.inventory_id AND i.tenant_id=sale.tenant_id AND i.branch_id=sale.branch_id JOIN users u ON u.id=sale.user_id WHERE sale.tenant_id=$1 AND sale.branch_id=$2 ORDER BY sale.created_at,sale.id LIMIT 10001`,
+          `SELECT sale.id,sale.customer_label,sale.amount,sale.method,sale.void_reason,to_char(sale.voided_at AT TIME ZONE 'Asia/Tashkent','YYYY-MM-DD HH24:MI:SS') voided_at,vu.email voided_by,i.model,i.imei,u.email author,to_char(sale.created_at AT TIME ZONE 'Asia/Tashkent','YYYY-MM-DD HH24:MI:SS') sale_time FROM cash_sales sale JOIN inventory i ON i.id=sale.inventory_id AND i.tenant_id=sale.tenant_id AND i.branch_id=sale.branch_id JOIN users u ON u.id=sale.user_id LEFT JOIN users vu ON vu.id=sale.voided_by WHERE sale.tenant_id=$1 AND sale.branch_id=$2 ORDER BY sale.created_at,sale.id LIMIT 10001`,
           args,
         )
       ).rows;

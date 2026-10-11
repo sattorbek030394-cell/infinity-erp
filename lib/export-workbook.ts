@@ -233,6 +233,10 @@ export async function exportWorkbook(data: ExportData) {
       "Summa UZS",
       "Usul",
       "Muallif",
+      "Holat",
+      "Bekor qilish sababi",
+      "Bekor qilingan vaqt (Toshkent)",
+      "Bekor qilgan xodim",
     ],
     data.sales.map((r) => [
       text(r.id),
@@ -243,6 +247,10 @@ export async function exportWorkbook(data: ExportData) {
       amount(r.amount),
       r.method === "cash" ? "Naqd" : r.method === "card" ? "Karta" : "O‘tkazma",
       text(r.author),
+      r.voided_at ? "Bekor qilingan — hisobga kirmaydi" : "Faol",
+      text(r.void_reason),
+      text(r.voided_at),
+      text(r.voided_by),
     ]),
     [6],
   );

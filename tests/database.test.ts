@@ -11,6 +11,7 @@ test("PostgreSQL schema blocks cross tenant/branch references and duplicate IMEI
     await db.exec(await readFile("db/004_cash_reversals.sql", "utf8"));
     await db.exec(await readFile("db/005_payment_voids.sql", "utf8"));
     await db.exec(await readFile("db/006_cash_sales.sql", "utf8"));
+    await db.exec(await readFile("db/007_sale_voids.sql", "utf8"));
     const t = "00000000-0000-4000-8000-000000000001",
       b = "00000000-0000-4000-8000-000000000002",
       b2 = "00000000-0000-4000-8000-000000000003",
