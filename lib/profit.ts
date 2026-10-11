@@ -20,8 +20,12 @@ import { readTargets, METRICS, type Metric } from "./targets";
  *   emas: ustama ulushi = ustama / (asosiy qarz + ustama).
  * - Boshlang'ich to'lov va mijoz avansi nasiya daromadiga kirmaydi:
  *   boshlang'ich qurilma narxining bir qismi, avans esa hali qarz emas.
- * - Muddatidan oldin yopishda bekor qilingan ustama o'sha oy daromadidan
- *   ayriladi - olinmagan daromad.
+ * - Muddatidan oldin yopishda bekor qilingan ustama daromaddan ayriladi,
+ *   lekin to'liq emas: to'lov ustamani proporsional tan olgani uchun
+ *   yopish to'lovi bilan ortiqcha tan olingan qism faqat bekor qilingan
+ *   summaning asosiy qarzga to'g'ri keladigan ulushi. Shuning uchun
+ *   tuzatish = bekor * asosiy / (asosiy + ustama). To'liq summani ayirish
+ *   allaqachon tan olingan daromadni ham o'chirib yuborardi.
  * - Bekor qilingan to'lov sanalmaydi.
  * - Telefon xaridi va ta'minotchiga qarz to'lovi xarajat emas: ular
  *   tovarga ketgan pul va tannarx orqali marjada hisobga olingan.
@@ -118,11 +122,17 @@ export async function readProfit(branchId: string, oyRaw: string, oylar = 6) {
  AND (p.created_at AT TIME ZONE 'Asia/Tashkent')::date<$4::date+interval '1 month'
  GROUP BY 1`,
   );
-  // Erta yopishda bekor qilingan ustama - olinmagan daromad.
+  // Erta yopishda bekor qilingan ustama - olinmagan daromad. "tuzatish" -
+  // daromaddan ayriladigan qism, "summa" - mijoz to'lamagan jami ustama
+  // (hisobotda ma'lumot uchun ko'rsatiladi).
   const bekor = await q(
     `SELECT to_char((x.decided_at AT TIME ZONE 'Asia/Tashkent')::date,'YYYY-MM') oy,
+ COALESCE(sum(round(x.markup_cancelled::numeric
+   * COALESCE(c.principal,c.total-c.down_payment)
+   / NULLIF(COALESCE(c.principal,c.total-c.down_payment)+COALESCE(c.markup,0),0))),0) tuzatish,
  COALESCE(sum(x.markup_cancelled),0) summa
  FROM contract_closures x
+ JOIN contracts c ON c.id=x.contract_id AND c.tenant_id=x.tenant_id AND c.branch_id=x.branch_id
  WHERE x.tenant_id=$1 AND x.branch_id=$2 AND x.status='completed'
  AND (x.decided_at AT TIME ZONE 'Asia/Tashkent')::date>=$3::date
  AND (x.decided_at AT TIME ZONE 'Asia/Tashkent')::date<$4::date+interval '1 month'
@@ -166,7 +176,7 @@ export async function readProfit(branchId: string, oyRaw: string, oylar = 6) {
       naqdNarx = Number(q2?.narx ?? 0),
       naqdTannarx = Number(q2?.tannarx ?? 0),
       marja = nasiyaNarx - nasiyaTannarx + naqdNarx - naqdTannarx,
-      ustamaDaromad = Number(u?.daromad ?? 0) - Number(b?.summa ?? 0),
+      ustamaDaromad = Number(u?.daromad ?? 0) - Number(b?.tuzatish ?? 0),
       xarajatUzs = Number(x?.uzs ?? 0),
       xarajatUsd = Number(x?.usd ?? 0);
     // Dollardagi xarajat: sent -> dollar -> so'm.

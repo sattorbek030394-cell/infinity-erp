@@ -3239,6 +3239,60 @@ test(
       );
     assert.ok(html.includes("Sof foyda"));
     assert.ok(html.includes("boshqaruv hisobi"));
+
+    // Erta yopish allaqachon tan olingan daromadni o'zgartirmaydi.
+    // Qarz 7 200 000, o'tgan davr 0 -> 1 200 000 ustama bekor qilinadi,
+    // yopish summasi 6 000 000. Mijoz jami 8 400 000 to'laydi: asosiy
+    // 8 000 000 + ishlab olingan ustama 400 000. Hisobotdagi nasiya
+    // daromadi shuning uchun 400 000 bo'lib qolishi kerak - yopish
+    // to'lovi ustamani proporsional tan olgani uchun ortiqcha tan
+    // olingan 1 000 000 aynan shuncha tuzatiladi, 1 200 000 emas.
+    const yopishB3 = (action: string) =>
+      fetch(origin + "/api/closures", {
+        method: "POST",
+        headers: {
+          cookie: outsiderCookie,
+          origin,
+          "content-type": "application/json",
+        },
+        body: JSON.stringify({ branchId: b3, contractId: contract, action }),
+      });
+    const h3 = await (await yopishB3("quote")).json();
+    assert.equal(h3.markupCancelled, 1_200_000);
+    assert.equal(h3.closeAmount, 6_000_000);
+    assert.equal(h3.markupKept, 400_000);
+    assert.equal(
+      (
+        await post(
+          "payments",
+          {
+            contractId: contract,
+            amount: 6_000_000,
+            method: "cash",
+            requestKey: randomUUID(),
+          },
+          b3,
+          outsiderCookie,
+        )
+      ).status,
+      200,
+    );
+    assert.equal((await yopishB3("complete")).status, 200);
+    const keyin = await (
+      await fetch(origin + "/erp?branch=" + b3 + "&tab=profit&oy=" + oy, {
+        headers: { cookie: outsiderCookie },
+      })
+    ).text();
+    for (const kutilgan of ["2 000 000", "400 000", "500 000", "1 900 000"])
+      assert.ok(
+        keyin.includes(kutilgan),
+        "erta yopishdan keyin foyda o'zgarmasligi kerak: " + kutilgan,
+      );
+    assert.ok(
+      keyin.includes("1 200 000") && keyin.includes("bekor qilingan"),
+      "bekor qilingan ustama alohida ko'rsatilsin",
+    );
+
     // Noto'g'ri oy so'ralsa hozirgi oy ko'rsatiladi, xato bermaydi.
     const yomon = await fetch(
       origin + "/erp?branch=" + b3 + "&tab=profit&oy=notdate",
