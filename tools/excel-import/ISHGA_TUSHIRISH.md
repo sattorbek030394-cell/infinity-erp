@@ -139,6 +139,29 @@ Shartnoma tuzish ekrani to'liq ishlaydi:
   yoki PDF qilib saqlanadi. Matn Excel'dagi "Shartnoma (yangi)" varag'idan
   so'zma-so'z olingan.
 
+### To'lovni tasdiqlash — kundalik ishda eng muhim o'zgarish
+
+Endi to'lov darhol hisobga kirmaydi:
+
+- **Naqd pulni kassir** o'zi tasdiqlaydi — u pulni sanab oldi, javobgarligi
+  auditda qoladi. Shuning uchun kassir kiritgan naqd to'lov darhol qarzni
+  kamaytiradi.
+- **P2P karta va bank tushumini faqat rahbar** tasdiqlaydi. Kassir kiritadi,
+  "Tasdiq kutayotgan" ekranida turadi: **qarzni kamaytirmaydi va kassa
+  qoldig'iga kirmaydi.** Siz pulning haqiqatan kelganini tekshirib
+  "Tasdiqlash" bosganda hisobga kiradi.
+- Rad etishda sabab majburiy. Rad etilgan tushum hisobda yo'q, lekin tarixda
+  qoladi.
+- Tasdiq kutayotgan tushumni bekor qilib bo'lmaydi — u rad etiladi.
+
+Shu sababli har kuni **"Tasdiq kutayotgan"** bo'limini ko'rib chiqing: u
+yerda turgan pul hali hisobda yo'q.
+
+Rollar: Administrator, Rahbar, Kassir, Sotuvchi, Omborchi, Undiruvchi,
+Hisobchi, Faqat ko'rish. Sozlamalar ekranida xodimga rol beriladi. Hozir
+administrator rahbar huquqini ham oladi (do'kon egasi ikkala vazifani
+bajaradi) — alohida rahbar kerak bo'lsa aytasiz, bir qatorda ajratiladi.
+
 Hali yo'q:
 
 - **Kirim (ombor) maydonlari formada.** Brend, xotira, rang, holat, batareya,
