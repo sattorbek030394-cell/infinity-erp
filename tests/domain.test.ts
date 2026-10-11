@@ -4,6 +4,9 @@ import {
   schedule,
   assertPayment,
   authorize,
+  can,
+  rollarAmal,
+  ROLLAR,
   itemSchema,
   contractSchema,
   paymentSchema,
@@ -19,6 +22,36 @@ test("integer schedule preserves exact balance and clamps end of month", () => {
     ["2026-02-28", "2026-03-31", "2026-04-30"],
   );
 });
+test("AT-07: yaxlitlash tafovuti oxirgi to'lovga tushadi", () => {
+  assert.deepEqual(
+    schedule(100, 0, 3, "2026-03-15").map((p) => p.amount),
+    [33, 33, 34],
+  );
+  // Yuqoriga yaxlitlanganda oxirgi band kichik bo'ladi, lekin yig'indi aynan
+  // teng qoladi va hech bir band nolga aylanmaydi.
+  const olti = schedule(10_000_000, 0, 6, "2026-03-15");
+  assert.deepEqual(
+    olti.map((p) => p.amount),
+    [1_666_667, 1_666_667, 1_666_667, 1_666_667, 1_666_667, 1_666_665],
+  );
+  for (const months of [1, 2, 3, 6, 8, 10, 12, 36])
+    for (const total of [37, 54, 101, 999, 1_000_001, 17_496_570]) {
+      const monthly = Math.round(total / months);
+      // Summa muddatga nisbatan juda kichik bo'lsa jadval tuzilmaydi -
+      // bunday shartnoma `schedule()` tomonidan rad etiladi.
+      if (monthly < 1 || total - monthly * (months - 1) < 1) continue;
+      const s = schedule(total, 0, months, "2026-01-31");
+      assert.equal(
+        s.reduce((n, p) => n + p.amount, 0),
+        total,
+        `${total}/${months}`,
+      );
+      assert.ok(
+        s.every((p) => p.amount > 0),
+        `${total}/${months} - nol band`,
+      );
+    }
+});
 test("rejects overpayment, negative payment and invalid terms", () => {
   for (const amount of [-1, 0, 101, 1.5])
     assert.throws(() => assertPayment(amount, 100));
@@ -31,6 +64,39 @@ test("viewer cannot mutate; unknown roles denied", () => {
   assert.throws(() => authorize("viewer", true));
   assert.throws(() => authorize("owner"));
   authorize("cashier", true);
+});
+test("rollar: har amal o'z roliga tegishli (TZ 5-bo'lim)", () => {
+  // Kassir pul tushumini o'zi tasdiqlay oladi, lekin P2P/bankni yo'q (AT-24).
+  assert.equal(can("cashier", "payment.approve.cash"), true);
+  assert.equal(can("cashier", "payment.approve.transfer"), false);
+  assert.equal(can("manager", "payment.approve.transfer"), true);
+  // Omborchi pulga tegmaydi, undiruvchi omborga tegmaydi.
+  assert.equal(can("warehouse", "inventory.create"), true);
+  assert.equal(can("warehouse", "payment.create"), false);
+  assert.equal(can("warehouse", "cash.entry"), false);
+  assert.equal(can("collector", "payment.create"), true);
+  assert.equal(can("collector", "inventory.create"), false);
+  // Hisobchi va faqat ko'ruvchi hech narsa o'zgartirmaydi.
+  for (const amal of [
+    "inventory.create",
+    "contract.create",
+    "payment.create",
+    "cash.entry",
+    "sale.create",
+  ] as const)
+    for (const rol of ["accountant", "viewer"])
+      assert.equal(can(rol, amal), false, `${rol} / ${amal}`);
+  // Sozlamalarni faqat administrator boshqaradi; bekor qilish rahbarda ham.
+  assert.deepEqual(rollarAmal("settings.write"), ["admin"]);
+  assert.deepEqual(rollarAmal("payment.void"), ["admin", "manager"]);
+  assert.deepEqual(rollarAmal("cash.reverse"), ["admin", "manager"]);
+  // O'chirilgan hisob va noma'lum rol - hech qanday huquqsiz.
+  for (const rol of ["disabled", "owner", "", "ADMIN"])
+    for (const amal of ["read", "export", "payment.create"] as const)
+      assert.equal(can(rol, amal), false, `${rol} / ${amal}`);
+  // Hamma rol kamida ko'rish huquqiga ega bo'lsin, aks holda filial
+  // ro'yxati bo'sh chiqadi.
+  for (const rol of ROLLAR) assert.equal(can(rol, "read"), true, rol);
 });
 test("input validation rejects malformed identifiers and money", () => {
   assert.equal(

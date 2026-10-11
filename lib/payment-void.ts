@@ -2,6 +2,7 @@ import { createHash, randomUUID } from "node:crypto";
 import { z } from "zod";
 import { scope, AccessDeniedError } from "./auth";
 import { transaction } from "./db";
+import { can } from "./domain";
 export const paymentVoidSchema = z
   .object({
     branchId: z.uuid(),
@@ -13,7 +14,7 @@ export const paymentVoidSchema = z
 export class PaymentVoidError extends Error {}
 export async function voidPayment(raw: unknown) {
   const v = paymentVoidSchema.parse(raw),
-    s = await scope(v.branchId, true);
+    s = await scope(v.branchId, "payment.void");
   return transaction(async (c) => {
     await c.query(
       "SELECT id FROM branches WHERE tenant_id=$1 AND id=$2 FOR UPDATE",
@@ -25,7 +26,7 @@ export async function voidPayment(raw: unknown) {
         [s.userId, s.tenant_id, s.branch_id],
       )
     ).rows[0]?.role;
-    if (role !== "admin") throw new AccessDeniedError();
+    if (!can(role, "payment.void")) throw new AccessDeniedError();
     const payment = (
       await c.query(
         "SELECT * FROM payments WHERE tenant_id=$1 AND branch_id=$2 AND id=$3",

@@ -3,6 +3,7 @@ import { z } from "zod";
 import { currentUser } from "../../lib/auth";
 import { db } from "../../lib/db";
 import { readBranch } from "../../lib/service";
+import { can, rollarAmal } from "../../lib/domain";
 import { readPaymentHistory } from "../../lib/history";
 import {
   matchesSearch,
@@ -30,8 +31,8 @@ export default async function ERP({
   if (!user) redirect("/login");
   const branches = (
     await db.query(
-      "SELECT b.id,b.name FROM branches b JOIN memberships m ON m.branch_id=b.id AND m.tenant_id=b.tenant_id WHERE m.user_id=$1 AND m.role IN ('admin','cashier','viewer') ORDER BY b.name",
-      [user.id],
+      "SELECT b.id,b.name FROM branches b JOIN memberships m ON m.branch_id=b.id AND m.tenant_id=b.tenant_id WHERE m.user_id=$1 AND m.role=ANY($2) ORDER BY b.name",
+      [user.id, rollarAmal("read")],
     )
   ).rows;
   if (!branches.length)
@@ -224,7 +225,7 @@ export default async function ERP({
         {tab === "inventory" ? (
           <>
             <h1>Ombor</h1>
-            {data.role !== "viewer" && (
+            {can(data.role, "inventory.create") && (
               <RecordForm branchId={branch} kind="inventory" items={[]} />
             )}
             <SearchForm
@@ -267,7 +268,7 @@ export default async function ERP({
         {tab === "contracts" ? (
           <>
             <h1>Nasiya shartnomalari</h1>
-            {data.role !== "viewer" && (
+            {can(data.role, "contract.create") && (
               <RecordForm
                 branchId={branch}
                 kind="contracts"
@@ -339,7 +340,7 @@ export default async function ERP({
         {tab === "payments" && history ? (
           <>
             <h1>To‘lovlar</h1>
-            {data.role !== "viewer" && (
+            {can(data.role, "payment.create") && (
               <RecordForm
                 branchId={branch}
                 kind="payments"

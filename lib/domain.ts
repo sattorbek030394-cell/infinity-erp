@@ -64,12 +64,101 @@ export const paymentSchema = z.object({
   method: z.enum(["cash", "card", "transfer"]),
   requestKey: z.uuid(),
 });
-export function authorize(role: string, write = false) {
-  if (
-    !["admin", "cashier", "viewer"].includes(role) ||
-    (write && role === "viewer")
-  )
-    throw new Error("Ruxsat yo‘q");
+// Rollar va amallar - texnik topshiriqning 5-bo'limi. Huquq har safar
+// serverda tekshiriladi; ekranda tugmani yashirish hisobga olinmaydi.
+//
+// Topshiriqda administrator va rahbar alohida: administrator pul tushumini
+// rahbar o'rniga tasdiqlay olmaydi. Hozir do'konning egasi ikkala vazifani
+// bajaradi, shuning uchun `admin` tasdiqlash huquqini ham oladi. Alohida
+// rahbar paydo bo'lganda `payment.approve.transfer` ni `admin` dan olib
+// tashlash kifoya - qolgan kod o'zgarmaydi.
+export const ROLLAR = [
+  "admin",
+  "manager",
+  "cashier",
+  "seller",
+  "warehouse",
+  "collector",
+  "accountant",
+  "viewer",
+] as const;
+export type Rol = (typeof ROLLAR)[number];
+export type Amal =
+  | "read"
+  | "export"
+  | "inventory.create"
+  | "contract.create"
+  | "payment.create"
+  | "payment.void"
+  | "payment.approve.cash"
+  | "payment.approve.transfer"
+  | "sale.create"
+  | "cash.entry"
+  | "cash.reverse"
+  | "settings.write";
+
+// Kichik do'kon haqiqati: kassir ayni paytda sotuvchi va omborchi ham.
+// Omborchi/sotuvchi rollari ajratilganda ularning huquqi shu jadvalda
+// qisqartiriladi.
+const HUQUQLAR: Record<Rol, Amal[]> = {
+  admin: [
+    "read",
+    "export",
+    "inventory.create",
+    "contract.create",
+    "payment.create",
+    "payment.void",
+    "payment.approve.cash",
+    "payment.approve.transfer",
+    "sale.create",
+    "cash.entry",
+    "cash.reverse",
+    "settings.write",
+  ],
+  manager: [
+    "read",
+    "export",
+    "inventory.create",
+    "contract.create",
+    "payment.create",
+    "payment.void",
+    "payment.approve.cash",
+    "payment.approve.transfer",
+    "sale.create",
+    "cash.entry",
+    "cash.reverse",
+  ],
+  cashier: [
+    "read",
+    "export",
+    "inventory.create",
+    "contract.create",
+    "payment.create",
+    "payment.approve.cash",
+    "sale.create",
+    "cash.entry",
+  ],
+  seller: ["read", "contract.create", "sale.create"],
+  warehouse: ["read", "inventory.create"],
+  collector: ["read", "payment.create"],
+  accountant: ["read", "export"],
+  viewer: ["read", "export"],
+};
+
+export function can(role: string, amal: Amal) {
+  return (HUQUQLAR as Record<string, Amal[] | undefined>)[role]?.includes(
+    amal,
+  ) === true;
+}
+
+/** Amalni bajaradigan rollar ro'yxati - bazadagi tekshiruv uchun. */
+export const rollarAmal = (amal: Amal) => ROLLAR.filter((r) => can(r, amal));
+
+export function authorize(role: string, amal: Amal | boolean = "read") {
+  // `true` - eski chaqiruvlar uchun: "biror yozuv o'zgartirish".
+  const kerak: Amal =
+    amal === true ? "payment.create" : amal === false ? "read" : amal;
+  if (!can(role, kerak)) throw new Error("Ruxsat yo‘q");
 }
 export function schedule(
   total: number,
@@ -87,11 +176,15 @@ export function schedule(
     !Number.isInteger(months)
   )
     throw new Error("Noto‘g‘ri shartnoma");
+  // Texnik topshiriq 4.2-4.3: oylik to'lov = round(T/n), oxirgi to'lov =
+  // T - oldingi bandlar. Yaxlitlash tafovuti oxirgi bandga tushadi, boshiga
+  // emas: 100 so'm 3 oyga 33 + 33 + 34 bo'linadi. Mijoz e'lon qilingan
+  // oylik summani to'lab yuradi, farq oxirida chiqadi.
   const balance = total - down,
-    base = Math.floor(balance / months),
-    extra = balance % months;
+    monthly = Math.round(balance / months),
+    last = balance - monthly * (months - 1);
   const d = new Date(start + "T00:00:00Z");
-  if (Number.isNaN(d.getTime()) || base < 1)
+  if (Number.isNaN(d.getTime()) || monthly < 1 || last < 1)
     throw new Error("Noto‘g‘ri sana yoki summa");
   return Array.from({ length: months }, (_, i) => {
     const first = new Date(
@@ -101,7 +194,7 @@ export function schedule(
     return {
       sequence: i + 1,
       dueDate: first.toISOString().slice(0, 10),
-      amount: base + (i < extra ? 1 : 0),
+      amount: i === months - 1 ? last : monthly,
     };
   });
 }

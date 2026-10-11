@@ -9,6 +9,7 @@ import {
   type SearchParams,
 } from "../../../../lib/filters";
 import { RecordForm } from "../../record-form";
+import { can } from "../../../../lib/domain";
 import { PaymentHistory } from "../../payment-history";
 export const dynamic = "force-dynamic";
 export default async function ContractPage({
@@ -145,7 +146,7 @@ export default async function ContractPage({
           Bu kelishilgan jadval. To‘lovlarni aniq oylarga taqsimlash hali
           qo‘shilmagan.
         </p>
-        {detail.role !== "viewer" && Number(c.balance) > 0 ? (
+        {can(detail.role, "payment.create") && Number(c.balance) > 0 ? (
           <>
             <h2>To‘lov kiritish</h2>
             <RecordForm

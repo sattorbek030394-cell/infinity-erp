@@ -8,6 +8,7 @@ import {
   schedule,
   nasiyaTotals,
   assertPayment,
+  type Amal,
 } from "./domain";
 import type { z } from "zod";
 import type { PoolClient } from "pg";
@@ -23,7 +24,15 @@ export async function createRecord(
   kind: string,
   input: unknown,
 ) {
-  const s = await scope(branchId, true);
+  // Har modulning o'z huquqi: omborchi kirim qiladi, undiruvchi to'lov
+  // kiritadi, sotuvchi shartnoma tuzadi - bir "yozish" huquqi emas.
+  const amal = {
+    inventory: "inventory.create",
+    contracts: "contract.create",
+    payments: "payment.create",
+  }[kind] as Amal | undefined;
+  if (!amal) throw new Error("Noto‘g‘ri modul");
+  const s = await scope(branchId, amal);
   return transaction((c) => writeRecord(c, s, kind, input));
 }
 type Shartnoma = z.infer<typeof contractSchema>;

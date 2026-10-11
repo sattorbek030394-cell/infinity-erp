@@ -2,12 +2,13 @@ import { createHash, randomUUID } from "node:crypto";
 import { scope, AccessDeniedError } from "./auth";
 import { db, transaction } from "./db";
 import { saleSchema } from "./sales-schema";
+import { rollarAmal } from "./domain";
 import { paymentWallet } from "./cash-domain";
 import type { HistoryFilters } from "./filters";
 export class SaleError extends Error {}
 export async function createSale(raw: unknown) {
   const v = saleSchema.parse(raw),
-    s = await scope(v.branchId, true);
+    s = await scope(v.branchId, "sale.create");
   return transaction(async (c) => {
     await c.query(
       "SELECT id FROM branches WHERE tenant_id=$1 AND id=$2 FOR UPDATE",
@@ -15,8 +16,8 @@ export async function createSale(raw: unknown) {
     );
     const role = (
       await c.query(
-        "SELECT role FROM memberships WHERE user_id=$1 AND tenant_id=$2 AND branch_id=$3 AND role IN ('admin','cashier')",
-        [s.userId, s.tenant_id, s.branch_id],
+        "SELECT role FROM memberships WHERE user_id=$1 AND tenant_id=$2 AND branch_id=$3 AND role=ANY($4)",
+        [s.userId, s.tenant_id, s.branch_id, rollarAmal("sale.create")],
       )
     ).rows[0]?.role;
     if (!role) throw new AccessDeniedError();

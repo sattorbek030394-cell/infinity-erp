@@ -4,7 +4,12 @@ import { useRouter } from "next/navigation";
 type Member = { id: string; email: string; role: string };
 const roles = [
   ["admin", "Administrator"],
+  ["manager", "Rahbar"],
   ["cashier", "Kassir"],
+  ["seller", "Sotuvchi"],
+  ["warehouse", "Omborchi"],
+  ["collector", "Undiruvchi"],
+  ["accountant", "Hisobchi"],
   ["viewer", "Faqat ko‘rish"],
 ];
 export function SettingsForms({

@@ -2,6 +2,7 @@ import { createHash, randomUUID } from "node:crypto";
 import type { PoolClient } from "pg";
 import { scope, AccessDeniedError } from "./auth";
 import { transaction, db } from "./db";
+import { can, rollarAmal } from "./domain";
 import {
   cashSchema,
   cashVoidSchema,
@@ -48,7 +49,7 @@ export async function postCashReceipt(
 }
 export async function mutateCash(raw: unknown) {
   const v = cashSchema.parse(raw),
-    s = await scope(v.branchId, true);
+    s = await scope(v.branchId, "cash.entry");
   let amount: number;
   try {
     amount = minorUnits(v.amount, v.wallet, v.action === "opening");
@@ -62,8 +63,8 @@ export async function mutateCash(raw: unknown) {
     );
     const role = (
       await c.query(
-        "SELECT role FROM memberships WHERE user_id=$1 AND tenant_id=$2 AND branch_id=$3 AND role IN ('admin','cashier')",
-        [s.userId, s.tenant_id, s.branch_id],
+        "SELECT role FROM memberships WHERE user_id=$1 AND tenant_id=$2 AND branch_id=$3 AND role=ANY($4)",
+        [s.userId, s.tenant_id, s.branch_id, rollarAmal("cash.entry")],
       )
     ).rows[0]?.role;
     if (!role || (v.action === "opening" && role !== "admin"))
@@ -187,7 +188,7 @@ export async function readCash(branchId: string, requestedPage: number) {
 }
 export async function reverseCash(raw: unknown) {
   const v = cashVoidSchema.parse(raw),
-    s = await scope(v.branchId, true);
+    s = await scope(v.branchId, "cash.reverse");
   return transaction(async (c) => {
     await c.query(
       "SELECT id FROM branches WHERE tenant_id=$1 AND id=$2 FOR UPDATE",
@@ -199,7 +200,7 @@ export async function reverseCash(raw: unknown) {
         [s.userId, s.tenant_id, s.branch_id],
       )
     ).rows[0]?.role;
-    if (role !== "admin") throw new AccessDeniedError();
+    if (!can(role, "cash.reverse")) throw new AccessDeniedError();
     const hash = createHash("sha256")
       .update(JSON.stringify({ action: "reverse", ...v }))
       .digest("hex");

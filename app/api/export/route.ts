@@ -1,5 +1,6 @@
 import { z } from "zod";
 import { scope, AccessDeniedError } from "../../../lib/auth";
+import { rollarAmal } from "../../../lib/domain";
 import { transaction } from "../../../lib/db";
 import { arrearsQuery } from "../../../lib/arrears-query";
 import { exportWorkbook } from "../../../lib/export-workbook";
@@ -18,14 +19,14 @@ export async function GET(request: Request) {
       { status: 400, headers },
     );
   try {
-    const s = await scope(branch!);
+    const s = await scope(branch!, "export");
     const data = await transaction(async (c) => {
       await c.query(
         "SET TRANSACTION ISOLATION LEVEL REPEATABLE READ READ ONLY",
       );
       const permission = await c.query(
-        "SELECT role FROM memberships WHERE user_id=$1 AND tenant_id=$2 AND branch_id=$3 AND role IN ('admin','cashier','viewer')",
-        [s.userId, s.tenant_id, s.branch_id],
+        "SELECT role FROM memberships WHERE user_id=$1 AND tenant_id=$2 AND branch_id=$3 AND role=ANY($4)",
+        [s.userId, s.tenant_id, s.branch_id, rollarAmal("export")],
       );
       if (!permission.rowCount) throw new AccessDeniedError();
       const args = [s.tenant_id, s.branch_id];
