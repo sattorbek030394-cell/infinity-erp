@@ -40,7 +40,7 @@ jobs:
       - if: failure()
         run: |
           [ -f checks.log ] || exit 0
-          tail -c 6000 checks.log | python3 -c "import sys
-print('::error title=Tekshiruv yiqildi::' + sys.stdin.buffer.read()
-  .decode('utf-8','replace').replace('%','%25')
-  .replace('\r','%0D').replace('\n','%0A'))"
+          printf '::error title=Tekshiruv yiqildi::'
+          tail -c 6000 checks.log | sed -e 's/%/%25/g' -e 's/\r//g' |
+            awk '{ printf "%s%%0A", $0 }'
+          echo
