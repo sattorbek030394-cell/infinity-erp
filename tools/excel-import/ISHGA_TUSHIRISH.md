@@ -57,24 +57,55 @@ npm run migrate
 
 ## 4. Excel'dan ko'chirish
 
-Excel faylni loyiha papkasiga qo'ying, keyin:
+Excel faylni loyiha papkasiga qo'ying. Avval **qaysi varaqlar borligini**
+ko'rib oling — hech bir varaq o'zi tanlanmaydi:
 
 ```sh
-python tools/excel-import/import.py "Yangi Hisobot 10.10.2026.xlsm" tools/excel-import/out
+python tools/excel-import/import.py "Yangi Hisobot 10.10.2026.xlsm" --list
+```
+
+Keyin kerakli varaqlarni tanlab ko'chirasiz:
+
+```sh
+python tools/excel-import/import.py "Yangi Hisobot 10.10.2026.xlsm" tools/excel-import/out \
+  --sheets "Kirim,Chiqim,Nasiya,To'lovlar,Kassa,Kassa daftari"
 psql "postgresql://erp:parol@localhost:5432/infinity" -f tools/excel-import/out/load.sql
 ```
 
 Ekranda shu chiqishi kerak:
 
 ```
-exchange_rates      147
+exchange_rates      150
 suppliers            56
 inventory           237
 customers           140
 contracts           150
 installments        751
 payments            277
+cash_wallets          4
+cash_operations       7
+cash_entries          7
 ```
+
+Varaqni alohida ko'chirish ham mumkin: masalan shartnomalar bazada bo'lsa
+`--sheets "To'lovlar"` deb faqat to'lovlarni yuklaysiz. Bog'lanishi
+topilmagan qator import qilinmaydi va `load.sql` nechta qator
+o'tkazilganini aytadi — jim import qilinmaydi.
+
+**Nimasi ko'chmaydi va nega:**
+
+| Varaq | Nega |
+| --- | --- |
+| Ombor, Qarzdorlar, Hisobot, Baza | Hisoblangan ko'rinishlar — dastur o'zi hisoblaydi |
+| Yetkazib beruvchilar | Kirimdan chiqadi; qarz qoldig'i Excelda **nol** |
+| Investorlar, Investor daftari/foyda | Investor moduli dasturda hali yo'q |
+| Anketa arxivi, Shartnoma (yangi) | Shablon va nusxalar |
+
+Kassa haqida: Excelda hisob **08.10.2026** dan boshlangan va to'rt
+hamyonning boshlang'ich qoldig'i nol. Kassa daftaridagi 7 yozuv (mart–
+sentabr oylarining xarajati, dollarda) shu sanadan oldin bo'lgani uchun
+qoldiqqa qo'shilmaydi — ular xarajat hisobotida ko'rinadi. Ikki marta
+hisoblash shunday oldini olinadi.
 
 ## 5. Foydalanuvchilar
 
@@ -273,7 +304,7 @@ Hali yo'q:
 - **Aksessuar va xizmat sotuvi** (chexol, oyna, remont) — model hozircha
   faqat IMEI'li qurilmani biladi.
 - **Kafil, minimal sotuv narxi va sotuvchi bonusi** — qaror kutilmoqda.
-- **Kassa daftari va investorlar** Excel'dan ko'chmaydi.
+- **Investor moduli** — kapital, foyda taqsimoti; Excel'dan ham ko'chmaydi.
 - **Hisobot ekrani.** Plan–fakt va 12 oylik jadval hozircha Excelda.
 
 Shuning uchun birinchi hafta Excel'ni yopmang: dasturda tuzgan shartnomani
