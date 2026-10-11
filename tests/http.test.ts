@@ -2348,3 +2348,53 @@ test(
     );
   },
 );
+
+test(
+  "HTTP: qarzdorlar ro'yxatida eslatma matni va telefon",
+  { skip: !connection },
+  async () => {
+    const auth = await login(admin + "@example.invalid");
+    const item = (
+      await (
+        await post(
+          "inventory",
+          { imei: "477777777777777", model: "SYNTHETIC ESLATMA", cost: 1_000_000 },
+          b1,
+          auth,
+        )
+      ).json()
+    ).id;
+    assert.equal(
+      (
+        await post(
+          "contracts",
+          {
+            inventoryId: item,
+            customerName: "SYNTHETIC ESLATMA mijoz",
+            phone1: "+998 90 777 77 77",
+            priceUzs: 3_000_000,
+            downPayment: 1_000_000,
+            months: 3,
+            monthlyRateBp: 500,
+            startDate: "2026-01-15",
+          },
+          b1,
+          auth,
+        )
+      ).status,
+      200,
+    );
+    const html = await (
+      await fetch(origin + "/erp?branch=" + b1 + "&tab=arrears&status=all", {
+        headers: { cookie: auth },
+      })
+    ).text();
+    assert.ok(html.includes("SYNTHETIC ESLATMA mijoz"));
+    assert.ok(html.includes("+998 90 777 77 77"), "telefon ro‘yxatda ko‘rinadi");
+    assert.ok(html.includes("Eslatma matni"));
+    assert.ok(
+      html.includes("Infinity do‘konidan eslatma"),
+      "eslatma matni tayyorlanadi",
+    );
+  },
+);

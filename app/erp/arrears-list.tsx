@@ -4,6 +4,23 @@ import {
   matchesSearch,
   type HistoryFilters,
 } from "../../lib/filters";
+import { Eslatma } from "./eslatma";
+
+/** Mijozga yuboriladigan eslatma matni: kechikkan va kutilayotgan uchun. */
+function eslatmaMatni(r: Record<string, any>) {
+  const sana = r.first_unpaid ? dateOnly(r.first_unpaid) : "";
+  const summa = money(r.next_amount ?? r.overdue ?? 0);
+  const kech = Number(r.days_late) > 0;
+  return (
+    `Assalomu alaykum, ${r.customer_label}. Infinity do‘konidan eslatma. ` +
+    (kech
+      ? `${sana} kungi ${summa} to‘lov hali tushmadi (${r.days_late} kun kechikdi). ` +
+        `Iltimos, bugun to‘lovni amalga oshiring yoki biz bilan bog‘laning.`
+      : `Keyingi to‘lov muddati ${sana}, summasi ${summa}.`) +
+    ` Qarz qoldig‘i: ${money(r.balance)}.` +
+    ` To‘lovni allaqachon qilgan bo‘lsangiz, xabarni e’tiborsiz qoldiring.`
+  );
+}
 export function ArrearsList({
   report,
   branch,
@@ -76,6 +93,7 @@ export function ArrearsList({
             <th>Muddati o‘tgan summa</th>
             <th>Eng eski qoplanmagan muddat</th>
             <th>Kechikish</th>
+            <th>Eslatma</th>
           </tr>
         </thead>
         <tbody>
@@ -98,11 +116,14 @@ export function ArrearsList({
               <td>
                 {Number(r.days_late) > 0 ? r.days_late + " kun" : "Kechikmagan"}
               </td>
+              <td>
+                <Eslatma text={eslatmaMatni(r)} phone={r.phone} />
+              </td>
             </tr>
           ))}
           {!found.length ? (
             <tr>
-              <td colSpan={5}>Mos shartnoma topilmadi.</td>
+              <td colSpan={6}>Mos shartnoma topilmadi.</td>
             </tr>
           ) : null}
         </tbody>
