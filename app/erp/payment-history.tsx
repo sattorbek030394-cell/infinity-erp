@@ -50,6 +50,12 @@ export function PaymentHistory({
               </td>
               <td>
                 {money(p.amount)}
+                {Number(p.advance_amount) > 0 ? (
+                  <small>
+                    Avansga: {money(p.advance_amount)} • olingan pul:{" "}
+                    {money(Number(p.amount) + Number(p.advance_amount))}
+                  </small>
+                ) : null}
                 {p.voided_at ? (
                   <small>Bekor qilingan • hisobga kirmaydi</small>
                 ) : p.status === "pending" ? (

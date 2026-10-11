@@ -3,6 +3,7 @@ import { scope, AccessDeniedError } from "./auth";
 import { db, transaction } from "./db";
 import { can, assertPayment, type Amal } from "./domain";
 import { postCashReceipt } from "./cash";
+import { yozAvans } from "./service";
 
 export const approvalSchema = z
   .object({
@@ -90,6 +91,11 @@ export async function decidePayment(raw: unknown) {
         );
       return { id: payment.id, status: payment.status };
     }
+    // Olingan pul: qarzga yo'naltirilgani va avansga tushgani birgalikda.
+    const received =
+      Number(payment.amount) + Number(payment.advance_amount ?? 0);
+    let applied = received,
+      advance = 0;
     if (v.decision === "approve") {
       const contract = (
         await c.query(
@@ -105,35 +111,34 @@ export async function decidePayment(raw: unknown) {
           )
         ).rows[0].paid,
       );
-      const balance =
-        Number(contract.total) - Number(contract.down_payment) - paid;
-      try {
-        assertPayment(Number(payment.amount), balance);
-      } catch {
-        throw new ApprovalError(
-          "Qoldiq o‘zgargan: bu summa qarzdan oshadi. Summani tekshirib qaytadan kiriting.",
-        );
-      }
+      const balance = Math.max(
+        0,
+        Number(contract.total) - Number(contract.down_payment) - paid,
+      );
+      // Kutish davomida qarz kamaygan bo'lishi mumkin: taqsimot tasdiq
+      // paytidagi qoldiqdan qayta hisoblanadi, ortig'i avansga tushadi
+      // (PAY-04). Pul rad etilmaydi - u allaqachon qabul qilingan.
+      applied = Math.min(received, balance);
+      advance = received - applied;
+      if (applied > 0) assertPayment(applied, balance);
     }
     await c.query(
-      `UPDATE payments SET status=$1,decided_by=$2,decided_at=now(),decided_reason=$3
- WHERE id=$4 AND status='pending'`,
+      `UPDATE payments SET status=$1,decided_by=$2,decided_at=now(),decided_reason=$3,
+ amount=$4,advance_amount=$5 WHERE id=$6 AND status='pending'`,
       [
         v.decision === "approve" ? "approved" : "rejected",
         s.userId,
         v.reason || null,
+        v.decision === "approve" ? applied : payment.amount,
+        v.decision === "approve" ? advance : payment.advance_amount ?? 0,
         v.paymentId,
       ],
     );
-    if (v.decision === "approve")
-      await postCashReceipt(
-        c,
-        s,
-        payment.id,
-        Number(payment.amount),
-        payment.method,
-        "payment",
-      );
+    if (v.decision === "approve") {
+      if (advance > 0)
+        await yozAvans(c, s, payment.id, payment.contract_id, advance);
+      await postCashReceipt(c, s, payment.id, received, payment.method, "payment");
+    }
     await c.query(
       "INSERT INTO audit_events(user_id,tenant_id,branch_id,action,record_id) VALUES($1,$2,$3,$4,$5)",
       [

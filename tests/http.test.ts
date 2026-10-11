@@ -281,11 +281,27 @@ test(
       ),
       1,
     );
+    // Parallel ikki to'lov: ikkisi ham qoplanadi, lekin biror so'm
+    // yo'qolmaydi yoki ikki marta sanalmaydi (qarz 700 edi).
     const raced = await Promise.all([
-      post("payments", { ...payment, amount: 500, requestKey: randomUUID() }),
-      post("payments", { ...payment, amount: 500, requestKey: randomUUID() }),
+      post("payments", { ...payment, amount: 250, requestKey: randomUUID() }),
+      post("payments", { ...payment, amount: 250, requestKey: randomUUID() }),
     ]);
-    assert.deepEqual(raced.map((r) => r.status).sort(), [200, 400]);
+    assert.deepEqual(raced.map((r) => r.status).sort(), [200, 200]);
+    assert.equal(
+      Number(
+        (
+          await pool.query(
+            `SELECT c.total-c.down_payment-COALESCE((SELECT sum(p.amount) FROM payments p
+ WHERE p.contract_id=c.id AND p.status='approved' AND p.voided_at IS NULL),0) balance
+ FROM contracts c WHERE c.id=$1`,
+            [contract],
+          )
+        ).rows[0].balance,
+      ),
+      200,
+      "parallel to'lovlar aniq qo'shiladi",
+    );
     const view = await fetch(origin + "/erp?branch=" + b2 + "&tab=inventory", {
       headers: { cookie },
     });
@@ -1856,5 +1872,159 @@ test(
       (await ekran(koruvchi)).includes("tasdiqlash huquqi yo‘q"),
       "ko'ruvchiga tasdiqlash ro'yxati ko'rsatilmaydi",
     );
+  },
+);
+
+test(
+  "HTTP: PAY-04 qarzdan ortiq tushum mijoz avansi bo'ladi",
+  { skip: !connection },
+  async () => {
+    const auth = await login(admin + "@example.invalid");
+    const device = async (imei: string) =>
+      (
+        await (
+          await post(
+            "inventory",
+            { imei, model: "SYNTHETIC AVANS", cost: 1_000_000 },
+            b1,
+            auth,
+          )
+        ).json()
+      ).id as string;
+    const shartnoma = async (imei: string) =>
+      (
+        await (
+          await post(
+            "contracts",
+            {
+              inventoryId: await device(imei),
+              customerLabel: "SYNTHETIC AVANS",
+              total: 1_000_000,
+              downPayment: 200_000,
+              months: 2,
+              startDate: "2026-09-25",
+            },
+            b1,
+            auth,
+          )
+        ).json()
+      ).id as string;
+    const holat = async (id: string) =>
+      (
+        await pool.query(
+          `SELECT c.total-c.down_payment-COALESCE((SELECT sum(p.amount) FROM payments p
+ WHERE p.contract_id=c.id AND p.status='approved' AND p.voided_at IS NULL),0) balance,
+ COALESCE((SELECT sum(a.amount) FROM customer_advances a
+   WHERE a.contract_id=c.id AND a.voided_at IS NULL),0) avans
+ FROM contracts c WHERE c.id=$1`,
+          [id],
+        )
+      ).rows[0];
+    const pay = (contractId: string, amount: number, extra = {}) =>
+      post(
+        "payments",
+        { contractId, amount, method: "cash", requestKey: randomUUID(), ...extra },
+        b1,
+        auth,
+      );
+
+    // AT-11: qarz 800 000, mijoz 1 000 000 beradi.
+    const bitta = await shartnoma("411111111111111");
+    assert.equal((await pay(bitta, 1_000_000)).status, 200);
+    let n = await holat(bitta);
+    assert.equal(Number(n.balance), 0, "qarz manfiy bo'lmaydi");
+    assert.equal(Number(n.avans), 200_000, "ortig'i avansga tushadi");
+    // Kassaga haqiqatda olingan pul tushadi: qarzga 800 000 ketgan bo'lsa
+    // ham to'lov yozuvi 1 000 000.
+    assert.equal(
+      Number(
+        (
+          await pool.query(
+            `SELECT COALESCE(sum(e.amount_minor),0) n FROM cash_entries e
+ WHERE e.payment_id IN (SELECT id FROM payments WHERE contract_id=$1)`,
+            [bitta],
+          )
+        ).rows[0].n,
+      ),
+      1_000_000,
+    );
+    // Qarzi yopilgan shartnomaga yangi to'lov kiritilmaydi.
+    assert.equal((await pay(bitta, 1000)).status, 400);
+
+    // Parallel ikki to'lov qarzdan oshsa: ikkisi ham qabul qilinadi,
+    // qarz aniq nolga tushadi, ortig'i avansda.
+    const ikki = await shartnoma("422222222222222");
+    const parallel = await Promise.all([pay(ikki, 500_000), pay(ikki, 500_000)]);
+    assert.deepEqual(parallel.map((r) => r.status).sort(), [200, 200]);
+    n = await holat(ikki);
+    assert.equal(Number(n.balance), 0);
+    assert.equal(Number(n.avans), 200_000);
+
+    // Tasdiq kutayotgan to'lovda taqsimot tasdiq paytida hisoblanadi:
+    // kutish davomida qarz naqd to'lov bilan yopilsa, hamma pul avansga
+    // tushadi va qarz manfiy bo'lmaydi.
+    const kassirAuth = await login(kassir + "@example.invalid");
+    const uch = await shartnoma("433333333333333");
+    const kutayotgan = (
+      await (
+        await post(
+          "payments",
+          {
+            contractId: uch,
+            amount: 800_000,
+            method: "card",
+            requestKey: randomUUID(),
+          },
+          b1,
+          kassirAuth,
+        )
+      ).json()
+    ).id;
+    assert.equal(Number((await holat(uch)).balance), 800_000);
+    assert.equal((await pay(uch, 800_000)).status, 200);
+    assert.equal(Number((await holat(uch)).balance), 0);
+    const qaror = await fetch(origin + "/api/payments/approve", {
+      method: "POST",
+      headers: { cookie: auth, origin, "content-type": "application/json" },
+      body: JSON.stringify({
+        branchId: b1,
+        paymentId: kutayotgan,
+        decision: "approve",
+      }),
+    });
+    assert.equal(qaror.status, 200);
+    n = await holat(uch);
+    assert.equal(Number(n.balance), 0, "qarz manfiy bo'lmaydi");
+    assert.equal(Number(n.avans), 800_000, "hammasi avansga tushadi");
+    assert.equal(
+      Number(
+        (
+          await pool.query(
+            "SELECT amount,advance_amount FROM payments WHERE id=$1",
+            [kutayotgan],
+          )
+        ).rows[0].amount,
+      ),
+      0,
+    );
+    // Shunday to'lovni bekor qilganda avans ham amaldan chiqadi.
+    assert.equal(
+      (
+        await fetch(origin + "/api/payments/void", {
+          method: "POST",
+          headers: { cookie: auth, origin, "content-type": "application/json" },
+          body: JSON.stringify({
+            branchId: b1,
+            paymentId: kutayotgan,
+            requestKey: randomUUID(),
+            reason: "SYNTHETIC avans bekor",
+          }),
+        })
+      ).status,
+      200,
+    );
+    n = await holat(uch);
+    assert.equal(Number(n.avans), 0, "bekor qilinganda avans ham chiqadi");
+    assert.equal(Number(n.balance), 0);
   },
 );

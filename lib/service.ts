@@ -38,6 +38,21 @@ export async function createRecord(
 }
 type Shartnoma = z.infer<typeof contractSchema>;
 
+/** PAY-04: to'lovdan ortib qolgan summa mijoz avansi sifatida yoziladi. */
+export async function yozAvans(
+  c: Pick<PoolClient, "query">,
+  s: Scope,
+  paymentId: string,
+  contractId: string,
+  amount: number,
+) {
+  await c.query(
+    `INSERT INTO customer_advances(id,tenant_id,branch_id,contract_id,payment_id,amount)
+ VALUES($1,$2,$3,$4,$5,$6) ON CONFLICT(payment_id) DO NOTHING`,
+    [randomUUID(), s.tenant_id, s.branch_id, contractId, paymentId, amount],
+  );
+}
+
 /**
  * Shartnoma summalari: narx berilsa ustamani dastur hisoblaydi.
  *
@@ -197,12 +212,16 @@ async function writeRecord(
       "SELECT COALESCE(sum(amount),0) paid FROM payments WHERE contract_id=$1 AND status='approved' AND voided_at IS NULL",
       [v.contractId],
     );
-    assertPayment(
-      v.amount,
+    const balance =
       Number(contract.rows[0].total) -
-        Number(contract.rows[0].down_payment) -
-        Number(sum.rows[0].paid),
-    );
+      Number(contract.rows[0].down_payment) -
+      Number(sum.rows[0].paid);
+    if (balance <= 0) throw new Error("Bu shartnomada qarz qolmagan");
+    // PAY-04: qarzdan ortiq summa rad etilmaydi - ortig'i mijoz avansi
+    // bo'ladi. Qarz manfiy ko'rsatilmaydi.
+    const applied = Math.min(v.amount, balance);
+    const advance = v.amount - applied;
+    assertPayment(applied, balance);
     // PAY-06: naqdni kassir, P2P/bankni rahbar tasdiqlaydi. Kirituvchining
     // o'zida shu huquq bo'lsa to'lov darhol hisobga kiradi va tasdiqlovchi
     // sifatida u yoziladi; bo'lmasa tasdiq kutadi va qarzni kamaytirmaydi.
@@ -211,15 +230,16 @@ async function writeRecord(
       v.method === "cash" ? "payment.approve.cash" : "payment.approve.transfer",
     );
     await c.query(
-      `INSERT INTO payments(id,tenant_id,branch_id,contract_id,amount,method,request_key,
+      `INSERT INTO payments(id,tenant_id,branch_id,contract_id,amount,advance_amount,method,request_key,
  evidence,created_by,status,decided_by,decided_at)
- VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12)`,
+ VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13)`,
       [
         id,
         s.tenant_id,
         s.branch_id,
         v.contractId,
-        v.amount,
+        applied,
+        advance,
         v.method,
         v.requestKey,
         v.evidence,
@@ -229,7 +249,12 @@ async function writeRecord(
         tasdiq ? new Date() : null,
       ],
     );
-    if (tasdiq) await postCashReceipt(c, s, id, v.amount, v.method, "payment");
+    if (tasdiq) {
+      if (advance > 0) await yozAvans(c, s, id, v.contractId, advance);
+      // Kassaga haqiqatda olingan pul tushadi: qarzga yo'naltirilgani va
+      // avansga tushgani birgalikda.
+      await postCashReceipt(c, s, id, v.amount, v.method, "payment");
+    }
   } else throw new Error("Noto‘g‘ri modul");
   await c.query(
     "INSERT INTO audit_events(user_id,tenant_id,branch_id,action,record_id) VALUES($1,$2,$3,$4,$5)",
@@ -245,7 +270,7 @@ export async function readBranch(branchId: string) {
     args,
   );
   const contracts = await db.query(
-    "SELECT c.*, i.model,i.imei,c.total-c.down_payment-COALESCE((SELECT sum(p.amount) FROM payments p WHERE p.contract_id=c.id AND p.status='approved' AND p.voided_at IS NULL),0) balance FROM contracts c JOIN inventory i ON i.id=c.inventory_id AND i.tenant_id=c.tenant_id AND i.branch_id=c.branch_id WHERE c.tenant_id=$1 AND c.branch_id=$2 ORDER BY start_date DESC,c.id",
+    "SELECT c.*, i.model,i.imei,COALESCE((SELECT sum(a.amount-a.used_amount) FROM customer_advances a WHERE a.contract_id=c.id AND a.voided_at IS NULL),0) advance,c.total-c.down_payment-COALESCE((SELECT sum(p.amount) FROM payments p WHERE p.contract_id=c.id AND p.status='approved' AND p.voided_at IS NULL),0) balance FROM contracts c JOIN inventory i ON i.id=c.inventory_id AND i.tenant_id=c.tenant_id AND i.branch_id=c.branch_id WHERE c.tenant_id=$1 AND c.branch_id=$2 ORDER BY start_date DESC,c.id",
     args,
   );
   return {
@@ -255,6 +280,13 @@ export async function readBranch(branchId: string) {
     salesTotal: (
       await db.query(
         "SELECT coalesce(sum(amount),0)::text total FROM cash_sales WHERE tenant_id=$1 AND branch_id=$2",
+        args,
+      )
+    ).rows[0].total,
+    // Mijoz avanslari qarzdan alohida yuritiladi (PAY-04).
+    advances: (
+      await db.query(
+        "SELECT coalesce(sum(amount-used_amount),0)::text total FROM customer_advances WHERE tenant_id=$1 AND branch_id=$2 AND voided_at IS NULL",
         args,
       )
     ).rows[0].total,

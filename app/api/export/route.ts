@@ -54,7 +54,7 @@ export async function GET(request: Request) {
       ).rows;
       const payments = (
         await c.query(
-          `SELECT p.id,p.contract_id,c.customer_label,i.imei,p.amount,p.method,p.status,p.void_reason,to_char(p.voided_at AT TIME ZONE 'Asia/Tashkent','YYYY-MM-DD HH24:MI:SS') voided_at,u.email voided_by,to_char(p.created_at AT TIME ZONE 'Asia/Tashkent','YYYY-MM-DD HH24:MI:SS') payment_time
+          `SELECT p.id,p.contract_id,c.customer_label,i.imei,p.amount,p.advance_amount,p.method,p.status,p.void_reason,to_char(p.voided_at AT TIME ZONE 'Asia/Tashkent','YYYY-MM-DD HH24:MI:SS') voided_at,u.email voided_by,to_char(p.created_at AT TIME ZONE 'Asia/Tashkent','YYYY-MM-DD HH24:MI:SS') payment_time
  FROM payments p JOIN contracts c ON c.id=p.contract_id AND c.tenant_id=p.tenant_id AND c.branch_id=p.branch_id
  JOIN inventory i ON i.id=c.inventory_id AND i.tenant_id=c.tenant_id AND i.branch_id=c.branch_id
  LEFT JOIN users u ON u.id=p.voided_by

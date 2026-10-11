@@ -122,6 +122,13 @@ export default async function ContractPage({
             <h2>Qolgan qarz</h2>
             <strong>{money(c.balance)}</strong>
           </section>
+          {Number(c.advance) > 0 ? (
+            <section>
+              <h2>Mijoz avansi</h2>
+              <strong>{money(c.advance)}</strong>
+              <p>Qarzdan ortib tushgan pul; qarz hisobiga kirmaydi.</p>
+            </section>
+          ) : null}
         </div>
         <h2>Oylik jadval</h2>
         <table>

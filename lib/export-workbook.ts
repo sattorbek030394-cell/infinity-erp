@@ -117,6 +117,7 @@ export async function exportWorkbook(data: ExportData) {
       "Bekor qilish sababi",
       "Bekor qilingan vaqt (Toshkent)",
       "Bekor qilgan xodim",
+      "Avansga tushgan",
     ],
     data.payments.map((r) => [
       text(r.id),
@@ -136,8 +137,9 @@ export async function exportWorkbook(data: ExportData) {
       text(r.void_reason),
       text(r.voided_at),
       text(r.voided_by),
+      amount(r.advance_amount),
     ]),
-    [5],
+    [5, 12],
   );
   add(
     "Qarzdorlar",

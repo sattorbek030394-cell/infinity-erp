@@ -76,7 +76,8 @@ export async function voidPayment(raw: unknown) {
         "Eski to‘lovning Kassa yozuvi yo‘q. Bu usul bilan bekor qilib bo‘lmaydi",
       );
     if (
-      Number(receipt.amount_minor) !== Number(payment.amount) ||
+      Number(receipt.amount_minor) !==
+        Number(payment.amount) + Number(payment.advance_amount) ||
       (
         await c.query("SELECT 1 FROM cash_entries WHERE reversal_of=$1", [
           receipt.id,
@@ -98,13 +99,30 @@ export async function voidPayment(raw: unknown) {
         s.branch_id,
         receipt.wallet,
         receipt.entry_date,
-        -Number(payment.amount),
+        -(Number(payment.amount) + Number(payment.advance_amount)),
         v.reason,
         s.userId,
         v.requestKey,
         receipt.id,
       ],
     );
+    // To'lov bilan birga shu to'lovdan chiqqan avans ham amaldan chiqadi.
+    // Avans allaqachon ishlatilgan bo'lsa bekor qilish bloklanadi.
+    const avans = (
+      await c.query(
+        "SELECT id,used_amount FROM customer_advances WHERE payment_id=$1 AND voided_at IS NULL FOR UPDATE",
+        [v.paymentId],
+      )
+    ).rows[0];
+    if (avans && Number(avans.used_amount) > 0)
+      throw new PaymentVoidError(
+        "Bu to‘lovning avansi ishlatilgan: avval avans harakatini bekor qiling",
+      );
+    if (avans)
+      await c.query(
+        "UPDATE customer_advances SET voided_at=now() WHERE id=$1",
+        [avans.id],
+      );
     await c.query(
       "UPDATE payments SET voided_at=now(),voided_by=$4,void_reason=$5,void_request_key=$6 WHERE tenant_id=$1 AND branch_id=$2 AND id=$3",
       [s.tenant_id, s.branch_id, v.paymentId, s.userId, v.reason, v.requestKey],
