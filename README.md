@@ -2,7 +2,7 @@
 
 Ikki filial uchun ishlaydigan boshlang‘ich dastur: xavfsiz login, Dashboard, IMEI bo‘yicha Ombor, Nasiya va To‘lovlar. Birinchi filial — **Infinity**; ikkinchisining nomi sozlanadi. Bu versiyani avval sun’iy ma’lumotlar bilan sinang.
 
-**Excel mosligi tasdiqlanmagan.** `Yangi Hisobot 10.10.2026.xlsm` kelajakdagi audit uchun manba. Fayl import qilinmagan, formulalar tekshirilmagan, Kassa ishonchliligi tasdiqlanmagan. Dashboarddagi olingan mablag‘ Kassa yoki sof foyda emas.
+**Excel mosligi tasdiqlanmagan.** `Yangi Hisobot 10.10.2026.xlsm` audit uchun manba. Fayl import qilinmagan. Kassa formulalarining cheklangan sinovida sana-vaqt xatolari aniqlangan; to‘liq audit tugamagan. Dashboarddagi olingan mablag‘ Kassa yoki sof foyda emas.
 
 ## Ishga tushirish
 
@@ -25,6 +25,8 @@ Texnik yordamchi uchun: Node.js 22+, PostgreSQL 17 va bo‘sh ma’lumotlar baza
 - Parolni tiklash yoki almashtirish ekrani hali mavjud emas. Dastlab sun’iy xodimlar bilan sinang.
 
 ## Excel hisobotini yuklash
+
+Eksportga Kassa hali kirmaydi.
 
 Filialni tanlab, **Excel hisobotini yuklash** havolasini bosing. `.xlsx` faylda Ma’lumot, Ombor, Nasiya, To‘lovlar va Qarzdorlar varaqlari bor. Tanlangan filialning barcha yozuvlari olinadi; ekrandagi qidiruv, sana yoki sahifa filtrlari eksportga qo‘llanmaydi. Kassir va kuzatuvchi ham o‘zi o‘qishga ruxsatli filial hisobotini yuklay oladi.
 
@@ -83,7 +85,7 @@ To‘liq HTTP testi uchun migratsiya qilingan **lokal test bazasi** bilan `INTEG
 
 Production: HTTPS, production DATABASE_URL, APP_ORIGIN ning aniq HTTPS manzili, migratsiyalar, alohida cheklangan DB foydalanuvchisi, backup/restore sinovi kerak. `npm run build` → `npm start`. Demo seedni real bazada ishlatmang.
 
-V1: login parolini tiklash, MFA, qaytarish/bekor qilish, filial transferi, kechikish taqsimoti va to‘liq Kassa yo‘q. Nasiya jadvali bazada mavjud; to‘lovlarni aniq oylarga ajratish hali yo‘q. Production operatsion audit va Excel parity auditi bajarilmagan.
+V1: login parolini tiklash, MFA, qaytarish/bekor qilish, filial transferi, kechikish taqsimoti va to‘liq buxgalteriya yo‘q. Nasiya jadvali bazada mavjud; to‘lovlarni aniq oylarga ajratish hali yo‘q. Production operatsion audit va Excel parity auditi bajarilmagan.
 
 Haqiqiy mijoz, passport, PNFL, haqiqiy to‘lov yoki maxfiy kalitlarni repositoryga kiritmang. Sun’iy seeddagi IMEI ham haqiqiy qurilma emas. Excel/CSV va env fayllari ignore qilingan; ignore qoidasi ma’lumot xavfsizligi tekshiruvi o‘rnini bosmaydi. Real ma’lumot importi V1 da mavjud emas.
 
@@ -100,3 +102,17 @@ Haqiqiy mijoz, passport, PNFL, haqiqiy to‘lov yoki maxfiy kalitlarni repositor
 - POST /api/settings — JSON: branchId, action (rename/create/grant/role) va tegishli maydonlar. Sessiya, Origin va filial administratorining ruxsati talab qilinadi. Ruxsatlar o‘zgarishi auditga yoziladi; parollar yozilmaydi.
 
 O‘zgarishlar uchun branch va PR yarating; test, typecheck, build o‘tishini tekshiring. Xavfsizlik yoki moliyaviy qoida o‘zgarsa integration testni kengaytiring.
+
+## Kassa
+
+Yangilaganda `npm run migrate` bajaring: `003_cash.sql` kassa jadvallarini yaratadi. Kassa bo‘limida har bir filial uchun Naqd UZS, Naqd USD, Karta (P2P) va Hisob raqam alohida yuritiladi.
+
+- Administrator tekshirilgan sana boshidagi qoldiqni bir marta belgilaydi. Noma’lum qoldiqni nol deb kiritmang; belgilanmaguncha balans “noma’lum”. V1 da boshlang‘ich qoldiqni tahrirlash mavjud emas.
+- Qoldiq = boshlang‘ich qoldiq + o‘sha kundan bugungacha kirim − chiqim. Sana serverda Toshkent vaqti bilan olinadi; bugungi kun to‘liq kiradi. Boshlang‘ich sanadan oldingi harakatlar daftarda saqlanadi, balansga kirmaydi.
+- Administrator va kassir kirim/chiqimni sabab va izoh bilan yozadi. Kuzatuvchi faqat ko‘radi. Turli UZS hamyonlari orasidagi o‘tkazma ikkita teng, qarama-qarshi yozuv bilan bitta tranzaksiyada bajariladi.
+- Yangi nasiya boshlang‘ich va keyingi to‘lovlari tanlangan usul bo‘yicha avtomatik yoziladi. Moliyaviy yozuv va kassa yozuvi bir tranzaksiyada saqlanadi. Bir xil kalitli takroriy so‘rov pulni ikki marta yozmaydi.
+- Avvalgi shartnoma/to‘lovlar ko‘chirilmagan. Yangi tushumning sanasi shartnoma jadvali boshlanish sanasi emas, pul kiritilgan kun. Avtomatik tushumni qo‘lda yana yozmang.
+- Omborga qurilma kiritish pul sarflanganini anglatmaydi; haqiqiy xaridga alohida chiqim yozing. USD sentlarda, UZS butun sonlarda saqlanadi. Valyuta kursi va USD o‘tkazmasi mavjud emas.
+- Manfiy balans ogohlantirish bilan ko‘rsatiladi. Yozuvlarni bekor qilish, filiallararo o‘tkazma, investor qarzi/foydasi, naqd savdo modeli va Kassa eksporti mavjud emas. “Investor kapitali” sababi investorning alohida hisobini yaratmaydi.
+
+POST /api/cash — branchId, requestKey, action (opening/entry/transfer), wallet, date, amount (matn), actionga tegishli direction/category/note yoki destination. Tenant serverdan olinadi; Origin va filial ruxsati tekshiriladi. Opening faqat administrator uchun. 200 {id}, 400 validatsiya yoki 403 ruxsat xatosi.

@@ -109,6 +109,9 @@ after(async () => {
   if (connection) {
     for (const table of [
       "audit_events",
+      "cash_entries",
+      "cash_operations",
+      "cash_wallets",
       "payments",
       "installments",
       "contracts",
@@ -310,6 +313,166 @@ test(
     const body = (html: string) =>
       html.match(/<tbody>([\s\S]*?)<\/tbody>/)?.[1] ?? "";
     const base = "/erp?branch=" + b1;
+    const today = (
+      await pool.query(
+        "SELECT (now() AT TIME ZONE 'Asia/Tashkent')::date::text today",
+      )
+    ).rows[0].today;
+    const cash = async (
+      data: Record<string, unknown>,
+      auth = cookie,
+      source = origin,
+    ) =>
+      fetch(origin + "/api/cash", {
+        method: "POST",
+        headers: {
+          cookie: auth,
+          origin: source,
+          "content-type": "application/json",
+        },
+        body: JSON.stringify({
+          branchId: b1,
+          requestKey: randomUUID(),
+          wallet: "cash_uzs",
+          date: today,
+          amount: "100",
+          action: "entry",
+          direction: "in",
+          category: "Boshqa kirim",
+          ...data,
+        }),
+      });
+    for (const auth of ["", viewerCookie, outsiderCookie])
+      assert.equal((await cash({}, auth)).status, 403);
+    assert.equal((await cash({ branchId: b3 })).status, 403);
+    assert.equal((await cash({}, cookie, "https://evil.invalid")).status, 400);
+    assert.equal((await cash({ tenantId: tenant })).status, 400);
+    const initial = (
+      await pool.query(
+        "SELECT count(*) n,sum(amount_minor) amount FROM cash_entries WHERE tenant_id=$1 AND branch_id=$2",
+        [tenant, b1],
+      )
+    ).rows[0];
+    assert.equal(Number(initial.n), 3);
+    assert.equal(
+      Number(initial.amount),
+      800,
+      "automatic receipts are posted once, inside financial transaction",
+    );
+    assert.ok(
+      (await get(base + "&tab=cash", viewerCookie)).includes("Qoldiq noma’lum"),
+    );
+    const opening = {
+      action: "opening",
+      direction: undefined,
+      category: undefined,
+      amount: "1000",
+      requestKey: randomUUID(),
+    };
+    assert.equal((await cash(opening)).status, 200);
+    assert.equal((await cash(opening)).status, 200);
+    assert.equal(
+      (await cash({ ...opening, requestKey: randomUUID() })).status,
+      400,
+    );
+    const balance = async (wallet = "cash_uzs") =>
+      Number(
+        (
+          await pool.query(
+            "SELECT w.opening_minor+coalesce(sum(e.amount_minor),0) balance FROM cash_wallets w LEFT JOIN cash_entries e ON e.tenant_id=w.tenant_id AND e.branch_id=w.branch_id AND e.wallet=w.wallet AND e.entry_date>=w.opening_date AND e.entry_date<=$3::date WHERE w.tenant_id=$1 AND w.branch_id=$2 AND w.wallet=$4 GROUP BY w.opening_minor",
+            [tenant, b1, today, wallet],
+          )
+        ).rows[0].balance,
+      );
+    assert.equal(await balance(), 1800);
+    const expense = {
+      direction: "out",
+      amount: "300",
+      requestKey: randomUUID(),
+    };
+    assert.equal((await cash(expense)).status, 200);
+    assert.equal((await cash(expense)).status, 200);
+    assert.equal(await balance(), 1500);
+    assert.equal((await cash({ ...expense, amount: "301" })).status, 400);
+    for (const amount of ["", "1e3", "-1", "1.50", "0"])
+      assert.equal((await cash({ amount })).status, 400);
+    assert.equal((await cash({ date: "2099-01-01" })).status, 400);
+    assert.equal((await cash({ date: today + "T12:00:00" })).status, 400);
+    assert.equal(
+      (
+        await cash({
+          ...opening,
+          wallet: "cash_usd",
+          amount: "100.25",
+          requestKey: randomUUID(),
+        })
+      ).status,
+      200,
+    );
+    assert.equal(
+      (await cash({ wallet: "cash_usd", amount: "0.01" })).status,
+      200,
+    );
+    assert.equal(await balance("cash_usd"), 10026);
+    const transfer = {
+      action: "transfer",
+      direction: undefined,
+      category: undefined,
+      destination: "card_uzs",
+      amount: "100",
+      requestKey: randomUUID(),
+    };
+    assert.equal((await cash(transfer)).status, 200);
+    assert.equal((await cash(transfer)).status, 200);
+    assert.equal(await balance(), 1400);
+    assert.equal(
+      Number(
+        (
+          await pool.query(
+            "SELECT sum(amount_minor) amount,count(*) n FROM cash_entries WHERE operation_id=$1",
+            [transfer.requestKey],
+          )
+        ).rows[0].amount,
+      ),
+      0,
+    );
+    assert.equal(
+      Number(
+        (
+          await pool.query(
+            "SELECT count(*) n FROM cash_entries WHERE operation_id=$1",
+            [transfer.requestKey],
+          )
+        ).rows[0].n,
+      ),
+      2,
+    );
+    assert.equal(
+      (
+        await cash({
+          ...transfer,
+          requestKey: randomUUID(),
+          destination: "cash_usd",
+        })
+      ).status,
+      400,
+    );
+    assert.equal(
+      (
+        await cash({
+          ...transfer,
+          requestKey: randomUUID(),
+          destination: "cash_uzs",
+        })
+      ).status,
+      400,
+    );
+    assert.equal((await cash({ ...expense, branchId: b2 })).status, 400);
+    assert.ok(
+      !(await get("/erp?branch=" + b2 + "&tab=cash")).includes(
+        "Nasiya • avtomatik",
+      ),
+    );
     for (const [branchId, auth] of [
       [b1, outsiderCookie],
       [b2, viewerCookie],
@@ -585,6 +748,16 @@ test(
     const staffCookie = await login(staffEmail);
     assert.equal(
       (
+        await cash(
+          { ...opening, requestKey: randomUUID(), wallet: "bank_uzs" },
+          staffCookie,
+        )
+      ).status,
+      403,
+    );
+    assert.equal((await cash({}, staffCookie)).status, 200);
+    assert.equal(
+      (
         await settings(
           { action: "rename", name: "cashier forbidden" },
           staffCookie,
@@ -648,6 +821,7 @@ test(
       200,
     );
     const blocked = await get(base + "&tab=inventory", staffCookie);
+    assert.equal((await cash({}, staffCookie)).status, 403);
     assert.equal(
       (
         await fetch(origin + "/api/export?branch=" + b1, {

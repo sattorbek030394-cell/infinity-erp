@@ -9,6 +9,7 @@ import {
   assertPayment,
 } from "./domain";
 import type { PoolClient } from "pg";
+import { postCashReceipt } from "./cash";
 type Scope = {
   tenant_id: string;
   branch_id: string;
@@ -67,6 +68,7 @@ async function writeRecord(
     await c.query("UPDATE inventory SET status='sold' WHERE id=$1", [
       v.inventoryId,
     ]);
+    await postCashReceipt(c, s, id, v.downPayment, v.downPaymentMethod, "down");
   } else if (kind === "payments") {
     const v = paymentSchema.parse(input);
     const contract = await c.query(
@@ -110,6 +112,7 @@ async function writeRecord(
         v.requestKey,
       ],
     );
+    await postCashReceipt(c, s, id, v.amount, v.method, "payment");
   } else throw new Error("Noto‘g‘ri modul");
   await c.query(
     "INSERT INTO audit_events(user_id,tenant_id,branch_id,action,record_id) VALUES($1,$2,$3,$4,$5)",

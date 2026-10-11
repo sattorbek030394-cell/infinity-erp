@@ -11,6 +11,7 @@ export const contractSchema = z
     customerLabel: z.string().trim().min(1).max(80),
     total: money,
     downPayment: z.coerce.number().int().min(0),
+    downPaymentMethod: z.enum(["cash", "card", "transfer"]).default("cash"),
     months: z.coerce.number().int().min(1).max(36),
     startDate: z.iso.date(),
   })

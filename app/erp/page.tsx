@@ -15,6 +15,8 @@ import { SearchForm } from "./search-form";
 import { PaymentHistory } from "./payment-history";
 import { readArrears } from "../../lib/arrears";
 import { ArrearsList } from "./arrears-list";
+import { readCash } from "../../lib/cash";
+import { CashPanel } from "./cash-panel";
 export const dynamic = "force-dynamic";
 export default async function ERP({
   searchParams,
@@ -53,9 +55,14 @@ export default async function ERP({
     );
   const tab =
     typeof query.tab === "string" &&
-    ["dashboard", "inventory", "contracts", "payments", "arrears"].includes(
-      query.tab,
-    )
+    [
+      "dashboard",
+      "inventory",
+      "contracts",
+      "payments",
+      "arrears",
+      "cash",
+    ].includes(query.tab)
       ? query.tab
       : "dashboard";
   const filters = parseFilters(query);
@@ -66,6 +73,7 @@ export default async function ERP({
       : "";
   const data = await readBranch(branch);
   const arrears = tab === "arrears" ? await readArrears(branch) : null;
+  const cash = tab === "cash" ? await readCash(branch, filters.page) : null;
   const items = data.items.filter(
     (i) =>
       matchesSearch(filters.q, i.model, i.imei) &&
@@ -126,6 +134,7 @@ export default async function ERP({
             ["contracts", "Nasiya"],
             ["payments", "To‘lovlar"],
             ["arrears", "Qarzdorlar"],
+            ["cash", "Kassa"],
           ].map(([key, label]) => (
             <a
               className={tab === key ? "active" : ""}
@@ -152,6 +161,9 @@ export default async function ERP({
             filters={filters}
             all={query.status === "all"}
           />
+        ) : null}
+        {cash ? (
+          <CashPanel report={cash} branch={branch} role={data.role} />
         ) : null}
         {tab === "dashboard" ? (
           <>

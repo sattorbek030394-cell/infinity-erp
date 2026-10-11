@@ -93,6 +93,14 @@ export function RecordForm({
           {field("customerLabel", "Mijoz belgisi (maxfiy hujjatsiz)")}
           {field("total", "Kelishilgan jami UZS", "number", 1)}
           {field("downPayment", "Boshlang‘ich UZS", "number", 0)}
+          <label>
+            Boshlang‘ich to‘lov hamyoni
+            <select name="downPaymentMethod">
+              <option value="cash">Naqd UZS</option>
+              <option value="card">Karta (P2P)</option>
+              <option value="transfer">Hisob raqam</option>
+            </select>
+          </label>
           {field("months", "Oylar", "number", 1, 36)}
           {field("startDate", "Boshlanish sanasi", "date")}
         </>
