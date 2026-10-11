@@ -8,3 +8,7 @@ node_modules/
 *.tsbuildinfo
 .local-checks/
 
+
+# Excel importi natijasi - mijoz ma'lumotlari (pasport, PNFL, manzil) bor, hech qachon commit qilinmaydi
+tools/excel-import/out/
+*.xlsm
