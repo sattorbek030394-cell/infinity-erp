@@ -14,7 +14,7 @@ import {
 } from "./domain";
 import type { z } from "zod";
 import type { PoolClient } from "pg";
-import { postCashReceipt } from "./cash";
+import { postCashReceipt, postPurchase } from "./cash";
 import { minorUnits, tushumMinor } from "./cash-domain";
 import { kunlikKurs } from "./kurs";
 import { qarzSql } from "./qarz-sql";
@@ -268,6 +268,46 @@ async function writeRecord(
         v.purchaseMethod ?? "",
       ],
     );
+    // TZ INV-02: to'lov turiga qarab kassadan chiqim yoki yetkazib
+    // beruvchi majburiyati. Investor tovari ikkisini ham yaratmaydi.
+    if (v.purchaseMethod === "debt") {
+      if (!supplierId)
+        throw new Error("Qarzga olingan tovarda yetkazib beruvchi majburiy");
+      await c.query(
+        `INSERT INTO supplier_obligations(id,tenant_id,branch_id,supplier_id,inventory_id,amount,usd_cents,rate,created_by)
+ VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9)`,
+        [
+          randomUUID(),
+          s.tenant_id,
+          s.branch_id,
+          supplierId,
+          id,
+          cost,
+          usdCents,
+          usdCents === null ? null : v.costRate,
+          s.userId,
+        ],
+      );
+    } else if (v.purchaseMethod && v.purchaseMethod !== "investor") {
+      const hamyon =
+        v.purchaseMethod === "cash_usd"
+          ? "cash_usd"
+          : v.purchaseMethod === "card"
+            ? "card_uzs"
+            : v.purchaseMethod === "bank"
+              ? "bank_uzs"
+              : "cash_uzs";
+      if (hamyon === "cash_usd" && usdCents === null)
+        throw new Error("Naqd USD xaridida tannarx dollarda bo‘lishi kerak");
+      // USD hamyonidan sent chiqadi, so'm hamyonidan so'm.
+      await postPurchase(
+        c,
+        s,
+        id,
+        hamyon === "cash_usd" ? usdCents! : cost,
+        hamyon,
+      );
+    }
   } else if (kind === "contracts") {
     const v = contractSchema.parse(input);
     const item = await c.query(

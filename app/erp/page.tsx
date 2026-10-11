@@ -24,6 +24,8 @@ import { readPending } from "../../lib/payment-approval";
 import { ApprovalsPanel } from "./approvals-panel";
 import { readClosures } from "../../lib/closure";
 import { ClosuresPanel } from "./closures-panel";
+import { readSuppliers } from "../../lib/supplier";
+import { SuppliersPanel } from "./suppliers-panel";
 import { cashMoney } from "../../lib/cash-domain";
 export const dynamic = "force-dynamic";
 export default async function ERP({
@@ -73,6 +75,7 @@ export default async function ERP({
       "arrears",
       "cash",
       "sales",
+      "suppliers",
     ].includes(query.tab)
       ? query.tab
       : "dashboard";
@@ -88,6 +91,7 @@ export default async function ERP({
   const sales = tab === "sales" ? await readSales(branch, filters) : null;
   const pending = tab === "approvals" ? await readPending(branch) : null;
   const closures = tab === "closures" ? await readClosures(branch) : null;
+  const suppliers = tab === "suppliers" ? await readSuppliers(branch) : null;
   const items = data.items.filter(
     (i) =>
       matchesSearch(
@@ -160,6 +164,7 @@ export default async function ERP({
             ["arrears", "Qarzdorlar"],
             ["cash", "Kassa"],
             ["sales", "Naqd savdo"],
+            ["suppliers", "Ta‘minotchilar"],
           ].map(([key, label]) => (
             <a
               className={tab === key ? "active" : ""}
@@ -450,6 +455,12 @@ export default async function ERP({
           <>
             <h1>Tasdiq kutayotgan tushumlar</h1>
             <ApprovalsPanel branchId={branch} pending={pending} />
+          </>
+        ) : null}
+        {tab === "suppliers" && suppliers ? (
+          <>
+            <h1>Yetkazib beruvchilar va qarzlar</h1>
+            <SuppliersPanel branchId={branch} report={suppliers} />
           </>
         ) : null}
         {tab === "closures" && closures ? (

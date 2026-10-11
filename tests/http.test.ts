@@ -2813,3 +2813,151 @@ test(
     assert.ok(html.includes("17 Pro Max 256 silver"), "tovar nomi to‘liq");
   },
 );
+
+test(
+  "HTTP: kirimning pul tomoni va yetkazib beruvchi qarzi",
+  { skip: !connection },
+  async () => {
+    const auth = await login(admin + "@example.invalid");
+    const hamyon = async (wallet: string) =>
+      Number(
+        (
+          await pool.query(
+            "SELECT COALESCE(sum(amount_minor),0) n FROM cash_entries WHERE branch_id=$1 AND wallet=$2",
+            [b1, wallet],
+          )
+        ).rows[0].n,
+      );
+    const kirim = (body: Record<string, unknown>) =>
+      post("inventory", { model: "SYNTHETIC SUP", ...body }, b1, auth);
+
+    // 1. Naqd USD xarid: dollar hamyonidan chiqadi.
+    const usdBefore = await hamyon("cash_usd");
+    const naqd = await kirim({
+      imei: "611111111111111",
+      costUsd: "800.00",
+      costRate: 12_500,
+      supplier: "SYNTHETIC Olim aka",
+      purchaseMethod: "cash_usd",
+    });
+    assert.equal(naqd.status, 200);
+    assert.equal(await hamyon("cash_usd"), usdBefore - 80_000);
+    // Naqd xarid qarz yaratmaydi.
+    assert.equal(
+      Number(
+        (await pool.query("SELECT count(*) n FROM supplier_obligations"))
+          .rows[0].n,
+      ),
+      0,
+    );
+
+    // 2. Qarzga xarid: kassada harakat yo'q, majburiyat paydo bo'ladi.
+    const uzsBefore = await hamyon("cash_uzs");
+    const qarzga = await kirim({
+      imei: "622222222222222",
+      cost: 10_000_000,
+      supplier: "SYNTHETIC Olim aka",
+      purchaseMethod: "debt",
+    });
+    assert.equal(qarzga.status, 200);
+    assert.equal(await hamyon("cash_uzs"), uzsBefore, "qarzga xarid pul chiqarmaydi");
+    const supplierId = (
+      await pool.query("SELECT id FROM suppliers WHERE name=$1", [
+        "SYNTHETIC Olim aka",
+      ])
+    ).rows[0].id;
+    assert.equal(
+      Number(
+        (
+          await pool.query(
+            "SELECT sum(amount) n FROM supplier_obligations WHERE supplier_id=$1",
+            [supplierId],
+          )
+        ).rows[0].n,
+      ),
+      10_000_000,
+    );
+    // Yetkazib beruvchisiz qarzga xarid qabul qilinmaydi.
+    assert.equal(
+      (
+        await kirim({
+          imei: "633333333333333",
+          cost: 1_000_000,
+          purchaseMethod: "debt",
+        })
+      ).status,
+      400,
+    );
+
+    // 3. Investor tovari: na chiqim, na qarz.
+    const investor = await kirim({
+      imei: "644444444444444",
+      cost: 7_000_000,
+      supplier: "SYNTHETIC Olim aka",
+      purchaseMethod: "investor",
+    });
+    assert.equal(investor.status, 200);
+    assert.equal(await hamyon("cash_uzs"), uzsBefore);
+
+    // 4. Qarz to'lovi: majburiyat kamayadi, kassadan pul chiqadi.
+    const pay = (body: Record<string, unknown>) =>
+      fetch(origin + "/api/suppliers/pay", {
+        method: "POST",
+        headers: { cookie: auth, origin, "content-type": "application/json" },
+        body: JSON.stringify({
+          branchId: b1,
+          supplierId,
+          wallet: "cash_uzs",
+          requestKey: randomUUID(),
+          ...body,
+        }),
+      });
+    // Qarzdan ortiq to'lov o'tmaydi.
+    assert.equal((await pay({ amount: 11_000_000 })).status, 400);
+    const kalit = randomUUID();
+    const birinchi = await pay({ amount: 4_000_000, requestKey: kalit });
+    assert.equal(birinchi.status, 200);
+    assert.equal(await hamyon("cash_uzs"), uzsBefore - 4_000_000);
+    // Takroriy so'rov ikkinchi to'lov yaratmaydi.
+    assert.equal((await pay({ amount: 4_000_000, requestKey: kalit })).status, 200);
+    assert.equal(await hamyon("cash_uzs"), uzsBefore - 4_000_000);
+    assert.equal(
+      Number(
+        (
+          await pool.query(
+            "SELECT count(*) n FROM supplier_settlements WHERE supplier_id=$1",
+            [supplierId],
+          )
+        ).rows[0].n,
+      ),
+      1,
+    );
+    // USD hamyonidan to'lovda kurs saqlanadi.
+    const usdPay = await pay({
+      wallet: "cash_usd",
+      usdAmount: "400.00",
+      rate: 12_500,
+    });
+    assert.equal(usdPay.status, 200);
+    assert.equal(await hamyon("cash_usd"), usdBefore - 80_000 - 40_000);
+    const settlement = (
+      await pool.query(
+        "SELECT * FROM supplier_settlements WHERE wallet='cash_usd' AND supplier_id=$1",
+        [supplierId],
+      )
+    ).rows[0];
+    assert.equal(Number(settlement.amount), 5_000_000);
+    assert.equal(Number(settlement.rate), 12_500);
+    // Qarz to'liq yopildi: yangi to'lov qabul qilinmaydi.
+    assert.equal((await pay({ amount: 1_000_000 })).status, 400);
+
+    // 5. Ekranda qarz va jamilar ko'rinadi.
+    const html = await (
+      await fetch(origin + "/erp?branch=" + b1 + "&tab=suppliers", {
+        headers: { cookie: auth },
+      })
+    ).text();
+    assert.ok(html.includes("SYNTHETIC Olim aka"));
+    assert.ok(html.includes("Jami qarzimiz"));
+  },
+);

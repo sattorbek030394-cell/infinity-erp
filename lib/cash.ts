@@ -17,12 +17,67 @@ type Scope = {
   role: string;
 };
 export class CashError extends Error {}
-async function wallets(c: Pick<PoolClient, "query">, s: Scope) {
+/** Filialning to'rt hamyoni mavjud bo'lsin: ularga FK bog'lanishlar bor. */
+export async function wallets(c: Pick<PoolClient, "query">, s: Scope) {
   await c.query(
     "INSERT INTO cash_wallets(tenant_id,branch_id,wallet) SELECT $1,$2,w FROM unnest(ARRAY['cash_uzs','cash_usd','card_uzs','bank_uzs']) w ON CONFLICT DO NOTHING",
     [s.tenant_id, s.branch_id],
   );
 }
+/**
+ * Kirim uchun kassadan chiqim (TZ INV-02).
+ *
+ * Summa hamyonning o'z birligida: USD hamyonidan sent, so'm hamyonidan
+ * so'm chiqadi. Har kirimga bitta yozuv - bazada UNIQUE(inventory_id).
+ */
+export async function postPurchase(
+  c: Pick<PoolClient, "query">,
+  s: Scope,
+  inventoryId: string,
+  walletMinor: number,
+  wallet: Wallet,
+) {
+  if (!walletMinor) return;
+  await wallets(c, s);
+  await c.query(
+    `INSERT INTO cash_entries(id,tenant_id,branch_id,wallet,entry_date,amount_minor,category,user_id,inventory_id)
+ VALUES($1,$2,$3,$4,(now() AT TIME ZONE 'Asia/Tashkent')::date,$5,'Telefon xaridi',$6,$7)`,
+    [
+      randomUUID(),
+      s.tenant_id,
+      s.branch_id,
+      wallet,
+      -walletMinor,
+      s.userId,
+      inventoryId,
+    ],
+  );
+}
+
+/** Yetkazib beruvchiga qarz to'lovi uchun kassadan chiqim (TZ SUP). */
+export async function postSettlement(
+  c: Pick<PoolClient, "query">,
+  s: Scope,
+  settlementId: string,
+  walletMinor: number,
+  wallet: Wallet,
+) {
+  await wallets(c, s);
+  await c.query(
+    `INSERT INTO cash_entries(id,tenant_id,branch_id,wallet,entry_date,amount_minor,category,user_id,settlement_id)
+ VALUES($1,$2,$3,$4,(now() AT TIME ZONE 'Asia/Tashkent')::date,$5,'Yetkazib beruvchiga qarz to‘lovi',$6,$7)`,
+    [
+      randomUUID(),
+      s.tenant_id,
+      s.branch_id,
+      wallet,
+      -walletMinor,
+      s.userId,
+      settlementId,
+    ],
+  );
+}
+
 export async function postCashReceipt(
   c: Pick<PoolClient, "query">,
   s: Scope,
