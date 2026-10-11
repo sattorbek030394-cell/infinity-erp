@@ -1,6 +1,7 @@
 import { readCash } from "../../lib/cash";
 import { cashMoney, walletNames, type Wallet } from "../../lib/cash-domain";
 import { CashForms } from "./cash-forms";
+import { CashReverse } from "./cash-reverse";
 export function CashPanel({
   report,
   branch,
@@ -90,6 +91,13 @@ export function CashPanel({
                   (e.payment_id || e.contract_id
                     ? "Nasiya • avtomatik"
                     : "Qo‘lda yozilgan")}
+                {e.reversed ? <small>Bekor qilingan</small> : null}
+                {role === "admin" &&
+                e.operation_id &&
+                !e.reversal_of &&
+                !e.reversed ? (
+                  <CashReverse branch={branch} entryId={e.id} />
+                ) : null}
               </td>
             </tr>
           ))}
@@ -109,9 +117,8 @@ export function CashPanel({
         ) : null}
       </p>
       <p>
-        USD UZS ga aylantirilmaydi. Filiallararo o‘tkazma, yozuvni bekor qilish
-        va to‘liq investor hisobi V1 ga kirmagan. Excel eksportiga Kassa hali
-        qo‘shilmagan.
+        USD UZS ga aylantirilmaydi. Filiallararo o‘tkazma va to‘liq investor
+        hisobi V1 ga kirmagan. Excel eksportiga Kassa hali qo‘shilmagan.
       </p>
     </>
   );

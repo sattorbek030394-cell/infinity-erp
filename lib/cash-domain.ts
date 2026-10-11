@@ -6,6 +6,14 @@ export const walletNames = {
   bank_uzs: "Hisob raqam",
 };
 export type Wallet = keyof typeof walletNames;
+export const cashVoidSchema = z
+  .object({
+    branchId: z.uuid(),
+    requestKey: z.uuid(),
+    entryId: z.uuid(),
+    reason: z.string().trim().min(5).max(160),
+  })
+  .strict();
 const wallet = z.enum(["cash_uzs", "cash_usd", "card_uzs", "bank_uzs"]);
 export const cashCategories = [
   "Boshqa kirim",

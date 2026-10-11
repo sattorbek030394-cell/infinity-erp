@@ -113,6 +113,14 @@ Yangilaganda `npm run migrate` bajaring: `003_cash.sql` kassa jadvallarini yarat
 - Yangi nasiya boshlang‘ich va keyingi to‘lovlari tanlangan usul bo‘yicha avtomatik yoziladi. Moliyaviy yozuv va kassa yozuvi bir tranzaksiyada saqlanadi. Bir xil kalitli takroriy so‘rov pulni ikki marta yozmaydi.
 - Avvalgi shartnoma/to‘lovlar ko‘chirilmagan. Yangi tushumning sanasi shartnoma jadvali boshlanish sanasi emas, pul kiritilgan kun. Avtomatik tushumni qo‘lda yana yozmang.
 - Omborga qurilma kiritish pul sarflanganini anglatmaydi; haqiqiy xaridga alohida chiqim yozing. USD sentlarda, UZS butun sonlarda saqlanadi. Valyuta kursi va USD o‘tkazmasi mavjud emas.
-- Manfiy balans ogohlantirish bilan ko‘rsatiladi. Yozuvlarni bekor qilish, filiallararo o‘tkazma, investor qarzi/foydasi, naqd savdo modeli va Kassa eksporti mavjud emas. “Investor kapitali” sababi investorning alohida hisobini yaratmaydi.
+- Manfiy balans ogohlantirish bilan ko‘rsatiladi. Filiallararo o‘tkazma, investor qarzi/foydasi, naqd savdo modeli va Kassa eksporti mavjud emas. “Investor kapitali” sababi investorning alohida hisobini yaratmaydi.
+
+### Xato harakatni bekor qilish
+
+`004_cash_reversals.sql` migratsiyasini qo‘llang. Administrator Kassa daftarida qo‘lda yozilgan asl harakatni ochib, **Bekor qilish** orqali kamida 5 belgili sabab yozadi. Asl yozuv o‘chmaydi; asl sanaga qarama-qarshi summa yoziladi, muallif va bajarilgan vaqt saqlanadi. Bu yangi pul harakati emas, tarixiy xatoni tuzatishdir. Hamyonlar orasidagi o‘tkazmaning ikkala tomoni birga bekor qilinadi. Bekor qilingan yozuv belgilanadi; uni yoki bekor qilish yozuvini yana bekor qilish bloklanadi.
+
+Kassir va kuzatuvchi bekor qila olmaydi. Boshlang‘ich qoldiq va avtomatik nasiya tushumi bu usul bilan bekor qilinmaydi; nasiya uchun bog‘langan qarz/to‘lovni tuzatish jarayoni hali mavjud emas.
+
+POST /api/cash/reverse — branchId, entryId, requestKey, reason. Sessiya, Origin va shu filial administratorining ruxsati talab qilinadi. Bir xil kalitli takroriy so‘rov bir marta bajariladi; boshqa kalit bilan ikkinchi bekor qilish rad etiladi. 200 {id}, 400 validatsiya yoki 403 ruxsat xatosi.
 
 POST /api/cash — branchId, requestKey, action (opening/entry/transfer), wallet, date, amount (matn), actionga tegishli direction/category/note yoki destination. Tenant serverdan olinadi; Origin va filial ruxsati tekshiriladi. Opening faqat administrator uchun. 200 {id}, 400 validatsiya yoki 403 ruxsat xatosi.

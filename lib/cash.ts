@@ -4,6 +4,7 @@ import { scope, AccessDeniedError } from "./auth";
 import { transaction, db } from "./db";
 import {
   cashSchema,
+  cashVoidSchema,
   minorUnits,
   paymentWallet,
   type Wallet,
@@ -178,9 +179,94 @@ export async function readCash(branchId: string, requestedPage: number) {
     page = Math.min(requestedPage, pages);
   const entries = (
     await db.query(
-      "SELECT id,wallet,entry_date::text,amount_minor::text,category,note,payment_id,contract_id,operation_id FROM cash_entries WHERE tenant_id=$1 AND branch_id=$2 ORDER BY entry_date DESC,created_at DESC,id DESC LIMIT 20 OFFSET $3",
+      "SELECT e.id,e.wallet,e.entry_date::text,e.amount_minor::text,e.category,e.note,e.payment_id,e.contract_id,e.operation_id,e.reversal_of,EXISTS(SELECT 1 FROM cash_entries r WHERE r.reversal_of=e.id) reversed FROM cash_entries e WHERE e.tenant_id=$1 AND e.branch_id=$2 ORDER BY e.entry_date DESC,e.created_at DESC,e.id DESC LIMIT 20 OFFSET $3",
       [s.tenant_id, s.branch_id, (page - 1) * 20],
     )
   ).rows;
   return { balances, entries, today, total, page, pages };
+}
+export async function reverseCash(raw: unknown) {
+  const v = cashVoidSchema.parse(raw),
+    s = await scope(v.branchId, true);
+  return transaction(async (c) => {
+    await c.query(
+      "SELECT id FROM branches WHERE tenant_id=$1 AND id=$2 FOR UPDATE",
+      [s.tenant_id, s.branch_id],
+    );
+    const role = (
+      await c.query(
+        "SELECT role FROM memberships WHERE user_id=$1 AND tenant_id=$2 AND branch_id=$3",
+        [s.userId, s.tenant_id, s.branch_id],
+      )
+    ).rows[0]?.role;
+    if (role !== "admin") throw new AccessDeniedError();
+    const hash = createHash("sha256")
+      .update(JSON.stringify({ action: "reverse", ...v }))
+      .digest("hex");
+    const prior = (
+      await c.query(
+        "SELECT tenant_id,branch_id,input_hash FROM cash_operations WHERE id=$1",
+        [v.requestKey],
+      )
+    ).rows[0];
+    if (prior) {
+      if (
+        prior.tenant_id !== s.tenant_id ||
+        prior.branch_id !== s.branch_id ||
+        prior.input_hash !== hash
+      )
+        throw new CashError("Takroriy so‘rov mos emas");
+      return v.requestKey;
+    }
+    const selected = (
+      await c.query(
+        "SELECT * FROM cash_entries WHERE tenant_id=$1 AND branch_id=$2 AND id=$3",
+        [s.tenant_id, s.branch_id, v.entryId],
+      )
+    ).rows[0];
+    if (!selected || !selected.operation_id || selected.reversal_of)
+      throw new CashError("Faqat qo‘lda kiritilgan asl harakat bekor qilinadi");
+    const entries = (
+      await c.query(
+        "SELECT e.* FROM cash_entries e WHERE e.tenant_id=$1 AND e.branch_id=$2 AND e.operation_id=$3 ORDER BY e.id FOR UPDATE",
+        [s.tenant_id, s.branch_id, selected.operation_id],
+      )
+    ).rows;
+    if (
+      (
+        await c.query(
+          "SELECT 1 FROM cash_entries WHERE reversal_of=ANY($1::uuid[])",
+          [entries.map((e) => e.id)],
+        )
+      ).rowCount
+    )
+      throw new CashError("Bu harakat avval bekor qilingan");
+    await c.query("INSERT INTO cash_operations VALUES($1,$2,$3,$4)", [
+      v.requestKey,
+      s.tenant_id,
+      s.branch_id,
+      hash,
+    ]);
+    for (const e of entries)
+      await c.query(
+        "INSERT INTO cash_entries(id,tenant_id,branch_id,wallet,entry_date,amount_minor,category,note,user_id,operation_id,reversal_of) VALUES($1,$2,$3,$4,$5,$6,'Bekor qilish',$7,$8,$9,$10)",
+        [
+          randomUUID(),
+          s.tenant_id,
+          s.branch_id,
+          e.wallet,
+          e.entry_date,
+          -Number(e.amount_minor),
+          v.reason,
+          s.userId,
+          v.requestKey,
+          e.id,
+        ],
+      );
+    await c.query(
+      "INSERT INTO audit_events(user_id,tenant_id,branch_id,action,record_id) VALUES($1,$2,$3,'cash.reverse',$4)",
+      [s.userId, s.tenant_id, s.branch_id, v.requestKey],
+    );
+    return v.requestKey;
+  });
 }

@@ -473,6 +473,175 @@ test(
         "Nasiya • avtomatik",
       ),
     );
+    // A separate synthetic branch reproduces the user's complete cash example.
+    for (const [wallet, amount] of [
+      ["cash_uzs", "1000000"],
+      ["card_uzs", "0"],
+    ])
+      assert.equal(
+        (
+          await cash({
+            ...opening,
+            branchId: b2,
+            wallet,
+            amount,
+            requestKey: randomUUID(),
+          })
+        ).status,
+        200,
+      );
+    const checkExample = async (expected: number) =>
+      assert.equal(
+        Number(
+          (
+            await pool.query(
+              "SELECT w.opening_minor+coalesce(sum(e.amount_minor),0) n FROM cash_wallets w LEFT JOIN cash_entries e ON e.tenant_id=w.tenant_id AND e.branch_id=w.branch_id AND e.wallet=w.wallet WHERE w.branch_id=$1 AND w.wallet='cash_uzs' GROUP BY w.opening_minor",
+              [b2],
+            )
+          ).rows[0].n,
+        ),
+        expected,
+      );
+    assert.equal((await cash({ branchId: b2, amount: "200000" })).status, 200);
+    await checkExample(1200000);
+    const exampleExpense = randomUUID();
+    assert.equal(
+      (
+        await cash({
+          branchId: b2,
+          direction: "out",
+          amount: "150000",
+          requestKey: exampleExpense,
+        })
+      ).status,
+      200,
+    );
+    await checkExample(1050000);
+    const exampleTransfer = randomUUID();
+    assert.equal(
+      (
+        await cash({
+          ...transfer,
+          branchId: b2,
+          amount: "300000",
+          requestKey: exampleTransfer,
+        })
+      ).status,
+      200,
+    );
+    await checkExample(750000);
+    assert.equal(
+      Number(
+        (
+          await pool.query(
+            "SELECT sum(amount_minor) n FROM cash_entries WHERE branch_id=$1 AND wallet='card_uzs'",
+            [b2],
+          )
+        ).rows[0].n,
+      ),
+      300000,
+    );
+    const entryId = (
+      await pool.query(
+        "SELECT id FROM cash_entries WHERE operation_id=$1 LIMIT 1",
+        [exampleExpense],
+      )
+    ).rows[0].id;
+    const reverse = async (
+      data: Record<string, unknown>,
+      auth = cookie,
+      source = origin,
+    ) =>
+      fetch(origin + "/api/cash/reverse", {
+        method: "POST",
+        headers: {
+          cookie: auth,
+          origin: source,
+          "content-type": "application/json",
+        },
+        body: JSON.stringify({
+          branchId: b2,
+          entryId,
+          requestKey: randomUUID(),
+          reason: "Sun’iy xato tuzatish",
+          ...data,
+        }),
+      });
+    for (const auth of ["", viewerCookie, outsiderCookie])
+      assert.equal((await reverse({}, auth)).status, 403);
+    assert.equal(
+      (await reverse({}, cookie, "https://evil.invalid")).status,
+      400,
+    );
+    assert.equal((await reverse({ reason: " " })).status, 400);
+    assert.equal((await reverse({ branchId: b1 })).status, 400);
+    const receipt = (
+      await pool.query(
+        "SELECT id FROM cash_entries WHERE branch_id=$1 AND payment_id IS NOT NULL LIMIT 1",
+        [b1],
+      )
+    ).rows[0].id;
+    assert.equal(
+      (await reverse({ branchId: b1, entryId: receipt })).status,
+      400,
+      "automatic receipt cannot be reversed independently of contract",
+    );
+    const reversalKey = randomUUID();
+    const results = await Promise.all([
+      reverse({ requestKey: reversalKey }),
+      reverse({ requestKey: reversalKey }),
+    ]);
+    assert.deepEqual(
+      results.map((r) => r.status),
+      [200, 200],
+    );
+    await checkExample(900000);
+    assert.equal(
+      (await reverse({ requestKey: reversalKey, reason: "Changed reason" }))
+        .status,
+      400,
+    );
+    assert.equal(
+      (await reverse({})).status,
+      400,
+      "new key cannot reverse again",
+    );
+    const reversalEntry = (
+      await pool.query("SELECT id FROM cash_entries WHERE reversal_of=$1", [
+        entryId,
+      ])
+    ).rows[0].id;
+    assert.equal(
+      (await reverse({ entryId: reversalEntry })).status,
+      400,
+      "cannot reverse a reversal",
+    );
+    const transferEntry = (
+      await pool.query(
+        "SELECT id FROM cash_entries WHERE operation_id=$1 LIMIT 1",
+        [exampleTransfer],
+      )
+    ).rows[0].id;
+    const race = await Promise.all([
+      reverse({ entryId: transferEntry }),
+      reverse({ entryId: transferEntry }),
+    ]);
+    assert.deepEqual(race.map((r) => r.status).sort(), [200, 400]);
+    await checkExample(1200000);
+    assert.equal(
+      Number(
+        (
+          await pool.query(
+            "SELECT sum(amount_minor) n FROM cash_entries WHERE branch_id=$1 AND wallet='card_uzs'",
+            [b2],
+          )
+        ).rows[0].n,
+      ),
+      0,
+    );
+    assert.ok(
+      (await get("/erp?branch=" + b2 + "&tab=cash")).includes("Bekor qilingan"),
+    );
     for (const [branchId, auth] of [
       [b1, outsiderCookie],
       [b2, viewerCookie],
