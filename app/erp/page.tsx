@@ -136,6 +136,15 @@ export default async function ERP({
             </a>
           ))}
         </nav>
+        <p>
+          <a className="textlink" href={"/api/export?branch=" + branch}>
+            Excel hisobotini yuklash ↓
+          </a>
+          <small>
+            Tanlangan filialning barcha yozuvlari. Ekran filtrlari eksportga
+            qo‘llanmaydi.
+          </small>
+        </p>
         {arrears ? (
           <ArrearsList
             report={arrears}

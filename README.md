@@ -24,6 +24,14 @@ Texnik yordamchi uchun: Node.js 22+, PostgreSQL 17 va bo‘sh ma’lumotlar baza
 - Xodim kirishini o‘chirish va qayta yoqish mumkin. Keyingi so‘rovlar yangi ruxsatni tekshiradi; boshqa filialdagi ruxsati saqlanadi. Administrator o‘z huquqini olib tashlay olmaydi va filial administratorsiz qolmaydi.
 - Parolni tiklash yoki almashtirish ekrani hali mavjud emas. Dastlab sun’iy xodimlar bilan sinang.
 
+## Excel hisobotini yuklash
+
+Filialni tanlab, **Excel hisobotini yuklash** havolasini bosing. `.xlsx` faylda Ma’lumot, Ombor, Nasiya, To‘lovlar va Qarzdorlar varaqlari bor. Tanlangan filialning barcha yozuvlari olinadi; ekrandagi qidiruv, sana yoki sahifa filtrlari eksportga qo‘llanmaydi. Kassir va kuzatuvchi ham o‘zi o‘qishga ruxsatli filial hisobotini yuklay oladi.
+
+IMEI matn, UZS summalari son sifatida saqlanadi. Sana va kechikish qoidasi faylda yoziladi. Bu qiymatlar nusxasi; formula, makros, parol yoki sessiya ma’lumotlari yo‘q. Barcha varaqlar bazaning bir xil holatidan olinadi. Yuklangan faylni faqat vakolatli odamga bering; dastur uni GitHubga yoki boshqa servisga yubormaydi.
+
+Har bir Ombor/Nasiya/To‘lovlar ro‘yxati 10 000 yozuvgacha. Limitdan oshganda eksport to‘liq rad qilinadi, yozuvlar kesilmaydi. Katta hajmli eksport va Excel/Kassa mosligi auditi hali mavjud emas.
+
 ## Qidiruv va shartnoma tafsilotlari
 
 - Omborda model yoki IMEI orqali qidiring; holatni Omborda/Sotilgan bo‘yicha tanlang.
@@ -75,11 +83,13 @@ To‘liq HTTP testi uchun migratsiya qilingan **lokal test bazasi** bilan `INTEG
 
 Production: HTTPS, production DATABASE_URL, APP_ORIGIN ning aniq HTTPS manzili, migratsiyalar, alohida cheklangan DB foydalanuvchisi, backup/restore sinovi kerak. `npm run build` → `npm start`. Demo seedni real bazada ishlatmang.
 
-V1: login parolini tiklash, MFA, qaytarish/bekor qilish, filial transferi, hisobot eksporti, kechikish taqsimoti va to‘liq Kassa yo‘q. Nasiya jadvali bazada mavjud; to‘lovlarni aniq oylarga ajratish hali yo‘q. Production operatsion audit va Excel parity auditi bajarilmagan.
+V1: login parolini tiklash, MFA, qaytarish/bekor qilish, filial transferi, kechikish taqsimoti va to‘liq Kassa yo‘q. Nasiya jadvali bazada mavjud; to‘lovlarni aniq oylarga ajratish hali yo‘q. Production operatsion audit va Excel parity auditi bajarilmagan.
 
 Haqiqiy mijoz, passport, PNFL, haqiqiy to‘lov yoki maxfiy kalitlarni repositoryga kiritmang. Sun’iy seeddagi IMEI ham haqiqiy qurilma emas. Excel/CSV va env fayllari ignore qilingan; ignore qoidasi ma’lumot xavfsizligi tekshiruvi o‘rnini bosmaydi. Real ma’lumot importi V1 da mavjud emas.
 
 ## API
+
+- GET /api/export?branch=<uuid> — ruxsatli filial uchun barcha yozuvlar `.xlsx` nusxasi; 400 noto‘g‘ri filial, 403 ruxsat yo‘q, 422 hajm limiti. Javob private/no-store.
 
 - POST /api/login — form email/password; muvaffaqiyat: 303, xato: 400/401.
 - POST /api/logout — sessiyani bekor qiladi; 303 yoki 403.

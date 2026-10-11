@@ -310,6 +310,37 @@ test(
     const body = (html: string) =>
       html.match(/<tbody>([\s\S]*?)<\/tbody>/)?.[1] ?? "";
     const base = "/erp?branch=" + b1;
+    for (const [branchId, auth] of [
+      [b1, outsiderCookie],
+      [b2, viewerCookie],
+      [b1, ""],
+    ]) {
+      const deniedExport = await fetch(
+        origin + "/api/export?branch=" + branchId,
+        { headers: { cookie: auth } },
+      );
+      assert.equal(deniedExport.status, 403);
+      assert.ok(!(await deniedExport.text()).includes(input.imei));
+    }
+    assert.equal(
+      (await fetch(origin + "/api/export?branch=bad", { headers: { cookie } }))
+        .status,
+      400,
+    );
+    const exportResponse = await fetch(origin + "/api/export?branch=" + b1, {
+      headers: { cookie: viewerCookie },
+    });
+    assert.equal(exportResponse.status, 200);
+    assert.equal(
+      exportResponse.headers.get("cache-control"),
+      "private, no-store",
+    );
+    assert.ok(
+      exportResponse.headers.get("content-disposition")?.includes(".xlsx"),
+    );
+    const exported = Buffer.from(await exportResponse.arrayBuffer());
+    assert.equal(exported.readUInt32LE(0), 0x04034b50);
+    assert.ok(exported.includes(Buffer.from(input.imei)));
     const arrearsHtml = await get(
       base + "&tab=arrears&status=all",
       viewerCookie,
@@ -389,6 +420,28 @@ test(
         [randomUUID(), tenant, b1, contract, randomUUID(), time],
       );
     const clean = (html: string) => html.replace(/<!--[\s\S]*?-->/g, "");
+    const fullExport = await fetch(
+      origin +
+        "/api/export?branch=" +
+        b1 +
+        "&q=missing&method=transfer&page=999",
+      { headers: { cookie: viewerCookie } },
+    );
+    assert.equal(fullExport.status, 200);
+    const fullBytes = Buffer.from(await fullExport.arrayBuffer()).toString();
+    const paymentSheet = fullBytes.match(
+      /<worksheet[^>]*>[\s\S]*?<t xml:space="preserve">To‘lov ID<\/t>[\s\S]*?<\/worksheet>/,
+    )?.[0];
+    assert.ok(paymentSheet);
+    // Match the sheet body after the payment header, excluding preceding worksheets.
+    const paymentRows =
+      paymentSheet.slice(paymentSheet.indexOf("To‘lov ID")).match(/<row r=/g) ??
+      [];
+    assert.equal(
+      paymentRows.length,
+      109,
+      "all payment rows exported, ignoring screen filters and pagination",
+    );
     const last = await get(base + "&tab=payments&page=999", viewerCookie);
     assert.ok(clean(last).includes("109 ta to‘lov topildi."));
     assert.equal((body(last).match(/<tr>/g) ?? []).length, 9);
@@ -595,6 +648,15 @@ test(
       200,
     );
     const blocked = await get(base + "&tab=inventory", staffCookie);
+    assert.equal(
+      (
+        await fetch(origin + "/api/export?branch=" + b1, {
+          headers: { cookie: staffCookie },
+        })
+      ).status,
+      403,
+      "disabled branch membership cannot export",
+    );
     assert.ok(blocked.includes("Filialga ruxsat yo‘q"));
     assert.ok(!blocked.includes(input.imei));
     assert.equal(
@@ -658,6 +720,19 @@ test(
       ),
       1,
     );
+    await pool.query(
+      "INSERT INTO inventory(id,tenant_id,branch_id,imei,model,cost) SELECT gen_random_uuid(),$1,$2,lpad(g::text,15,'0'),'SYNTHETIC EXPORT LIMIT',0 FROM generate_series(1,10001) g",
+      [tenant, b2],
+    );
+    const oversizedExport = await fetch(origin + "/api/export?branch=" + b2, {
+      headers: { cookie },
+    });
+    assert.equal(
+      oversizedExport.status,
+      422,
+      "oversized report rejected instead of silently truncating",
+    );
+    assert.ok((await oversizedExport.text()).includes("10 000"));
     for (let i = 0; i < 5; i++) {
       const wrong = await fetch(origin + "/api/login", {
         method: "POST",
