@@ -2028,3 +2028,127 @@ test(
     assert.equal(Number(n.balance), 0);
   },
 );
+
+test(
+  "HTTP: PAY-02 dollardagi to'lov kurs bilan so'mga aylanadi",
+  { skip: !connection },
+  async () => {
+    const auth = await login(admin + "@example.invalid");
+    const item = (
+      await (
+        await post(
+          "inventory",
+          { imei: "455555555555555", model: "SYNTHETIC USD", cost: 5_000_000 },
+          b1,
+          auth,
+        )
+      ).json()
+    ).id;
+    const contract = (
+      await (
+        await post(
+          "contracts",
+          {
+            inventoryId: item,
+            customerLabel: "SYNTHETIC USD mijoz",
+            total: 20_000_000,
+            downPayment: 0,
+            months: 4,
+            startDate: "2026-09-25",
+          },
+          b1,
+          auth,
+        )
+      ).json()
+    ).id;
+    const pay = (body: Record<string, unknown>) =>
+      post(
+        "payments",
+        { contractId: contract, requestKey: randomUUID(), ...body },
+        b1,
+        auth,
+      );
+    // AT-10: kursi yo'q USD to'lov saqlanmaydi.
+    assert.equal(
+      (await pay({ method: "cash_usd", usdAmount: "100.50" })).status,
+      400,
+    );
+    assert.equal((await pay({ method: "cash_usd", rate: 12_800 })).status, 400);
+
+    const usdBefore = Number(
+      (
+        await pool.query(
+          "SELECT COALESCE(sum(amount_minor),0) n FROM cash_entries WHERE branch_id=$1 AND wallet='cash_usd'",
+          [b1],
+        )
+      ).rows[0].n,
+    );
+    const tolov = await pay({
+      method: "cash_usd",
+      usdAmount: "100.50",
+      rate: 12_800,
+    });
+    assert.equal(tolov.status, 200);
+    const id = (await tolov.json()).id;
+    const row = (await pool.query("SELECT * FROM payments WHERE id=$1", [id]))
+      .rows[0];
+    // 100.50 USD * 12 800 = 1 286 400 so'm
+    assert.equal(Number(row.amount), 1_286_400);
+    assert.equal(Number(row.usd_cents), 10_050);
+    assert.equal(Number(row.rate), 12_800);
+    assert.equal(row.status, "approved");
+    // Naqd USD hamyoniga dollar tushadi, so'm emas.
+    assert.equal(
+      Number(
+        (
+          await pool.query(
+            "SELECT COALESCE(sum(amount_minor),0) n FROM cash_entries WHERE branch_id=$1 AND wallet='cash_usd'",
+            [b1],
+          )
+        ).rows[0].n,
+      ),
+      usdBefore + 10_050,
+    );
+    // Qarz so'mda kamayadi.
+    assert.equal(
+      Number(
+        (
+          await pool.query(
+            `SELECT c.total-c.down_payment-COALESCE((SELECT sum(p.amount) FROM payments p
+ WHERE p.contract_id=c.id AND p.status='approved' AND p.voided_at IS NULL),0) balance
+ FROM contracts c WHERE c.id=$1`,
+            [contract],
+          )
+        ).rows[0].balance,
+      ),
+      20_000_000 - 1_286_400,
+    );
+    // Bekor qilishda dollar hamyondan chiqadi.
+    assert.equal(
+      (
+        await fetch(origin + "/api/payments/void", {
+          method: "POST",
+          headers: { cookie: auth, origin, "content-type": "application/json" },
+          body: JSON.stringify({
+            branchId: b1,
+            paymentId: id,
+            requestKey: randomUUID(),
+            reason: "SYNTHETIC usd bekor",
+          }),
+        })
+      ).status,
+      200,
+    );
+    assert.equal(
+      Number(
+        (
+          await pool.query(
+            "SELECT COALESCE(sum(amount_minor),0) n FROM cash_entries WHERE branch_id=$1 AND wallet='cash_usd'",
+            [b1],
+          )
+        ).rows[0].n,
+      ),
+      usdBefore,
+    );
+  },
+);

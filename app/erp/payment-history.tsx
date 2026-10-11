@@ -1,4 +1,5 @@
 import { dateTime, methodNames, money } from "../../lib/filters";
+import { cashMoney } from "../../lib/cash-domain";
 import type { readPaymentHistory } from "../../lib/history";
 import { PaymentVoid } from "./payment-void";
 import { can } from "../../lib/domain";
@@ -50,6 +51,11 @@ export function PaymentHistory({
               </td>
               <td>
                 {money(p.amount)}
+                {p.usd_cents ? (
+                  <small>
+                    {cashMoney(p.usd_cents, "cash_usd")} × {money(p.rate)}
+                  </small>
+                ) : null}
                 {Number(p.advance_amount) > 0 ? (
                   <small>
                     Avansga: {money(p.advance_amount)} • olingan pul:{" "}

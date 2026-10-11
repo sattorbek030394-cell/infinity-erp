@@ -159,6 +159,7 @@ export default async function ContractPage({
             <RecordForm
               branchId={branch}
               kind="payments"
+              kurs={detail.kurs}
               selectedId={id}
               items={[
                 { id, label: c.customer_label + " / " + money(c.balance) },

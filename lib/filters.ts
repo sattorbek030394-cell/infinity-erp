@@ -20,7 +20,9 @@ export function parseFilters(query: SearchParams): HistoryFilters {
     z.iso.date().safeParse(single(v)).success ? single(v) : "";
   return {
     q: single(query.q).trim().slice(0, 80),
-    method: ["cash", "card", "transfer"].includes(single(query.method))
+    method: ["cash", "cash_usd", "card", "transfer"].includes(
+      single(query.method),
+    )
       ? single(query.method)
       : "",
     from: date(query.from),
@@ -37,7 +39,8 @@ export function matchesSearch(q: string, ...fields: unknown[]) {
   );
 }
 export const methodNames: Record<string, string> = {
-  cash: "Naqd",
+  cash: "Naqd UZS",
+  cash_usd: "Naqd USD",
   card: "Karta",
   transfer: "O‘tkazma",
 };

@@ -3,6 +3,7 @@ import { z } from "zod";
 import { scope, AccessDeniedError } from "./auth";
 import { transaction } from "./db";
 import { can } from "./domain";
+import { tushumMinor } from "./cash-domain";
 export const paymentVoidSchema = z
   .object({
     branchId: z.uuid(),
@@ -76,8 +77,7 @@ export async function voidPayment(raw: unknown) {
         "Eski to‘lovning Kassa yozuvi yo‘q. Bu usul bilan bekor qilib bo‘lmaydi",
       );
     if (
-      Number(receipt.amount_minor) !==
-        Number(payment.amount) + Number(payment.advance_amount) ||
+      Number(receipt.amount_minor) !== tushumMinor(payment) ||
       (
         await c.query("SELECT 1 FROM cash_entries WHERE reversal_of=$1", [
           receipt.id,
@@ -99,7 +99,7 @@ export async function voidPayment(raw: unknown) {
         s.branch_id,
         receipt.wallet,
         receipt.entry_date,
-        -(Number(payment.amount) + Number(payment.advance_amount)),
+        -tushumMinor(payment),
         v.reason,
         s.userId,
         v.requestKey,

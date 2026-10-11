@@ -58,15 +58,35 @@ export const contractSchema = z
   .refine((v) => v.downPayment < (v.priceUzs ?? v.total ?? 0), {
     message: "Boshlang‘ich to‘lov narxdan kichik bo‘lsin",
   });
-export const paymentSchema = z.object({
-  contractId: z.uuid(),
-  amount: money,
-  method: z.enum(["cash", "card", "transfer"]),
-  // P2P/bank tushumining dalili: tranzaksiya identifikatori yoki kvitansiya
-  // raqami. Rahbar shu bo'yicha haqiqiy tushumni tekshiradi (PAY-06).
-  evidence: z.string().trim().max(160).default(""),
-  requestKey: z.uuid(),
-});
+export const TOLOV_USULLARI = ["cash", "cash_usd", "card", "transfer"] as const;
+
+/** Qaysi rol shu usuldagi tushumni tasdiqlaydi (PAY-06). */
+export const tasdiqAmal = (method: string): Amal =>
+  method.startsWith("cash") ? "payment.approve.cash" : "payment.approve.transfer";
+
+export const paymentSchema = z
+  .object({
+    contractId: z.uuid(),
+    // So'mdagi to'lov summasi. USD to'lovda bo'sh qoldiriladi - uni
+    // dastur kursdan hisoblaydi.
+    amount: ixtiyoriy(money),
+    // Dollarda olingan summa, masalan "100.50", va to'lov kursi.
+    usdAmount: ixtiyoriy(z.string().regex(/^\d{1,9}(\.\d{1,2})?$/)),
+    rate: ixtiyoriy(z.coerce.number().int().min(1).max(100_000_000)),
+    method: z.enum(TOLOV_USULLARI),
+    // P2P/bank tushumining dalili: tranzaksiya identifikatori yoki kvitansiya
+    // raqami. Rahbar shu bo'yicha haqiqiy tushumni tekshiradi (PAY-06).
+    evidence: z.string().trim().max(160).default(""),
+    requestKey: z.uuid(),
+  })
+  // AT-10: kursi yo'q USD to'lov qabul qilinmaydi.
+  .refine(
+    (v) =>
+      v.method === "cash_usd"
+        ? v.usdAmount !== undefined && v.rate !== undefined
+        : v.amount !== undefined,
+    { message: "USD to‘lovda summa va kurs majburiy" },
+  );
 // Rollar va amallar - texnik topshiriqning 5-bo'limi. Huquq har safar
 // serverda tekshiriladi; ekranda tugmani yashirish hisobga olinmaydi.
 //

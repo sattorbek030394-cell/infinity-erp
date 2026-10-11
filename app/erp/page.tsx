@@ -359,6 +359,7 @@ export default async function ERP({
               <RecordForm
                 branchId={branch}
                 kind="payments"
+                kurs={data.kurs}
                 items={data.contracts
                   .filter((c) => Number(c.balance) > 0)
                   .map((c) => ({

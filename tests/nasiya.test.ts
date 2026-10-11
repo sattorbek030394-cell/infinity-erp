@@ -1,6 +1,11 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
-import { contractSchema, nasiyaTotals, schedule } from "../lib/domain";
+import {
+  contractSchema,
+  paymentSchema,
+  nasiyaTotals,
+  schedule,
+} from "../lib/domain";
 
 test("ustama oddiy foiz: asosiy qarz * oylik foiz * muddat", () => {
   // Excel'dagi 1-shartnoma: narx 5 535 000, boshlang'ich 3 690 000,
@@ -129,5 +134,53 @@ test("noto'g'ri PNFL, narx va boshlang'ich rad etiladi", () => {
       contractSchema.safeParse(yomon).success,
       false,
       JSON.stringify(yomon),
+    );
+});
+
+test("AT-10: kursi yo'q USD to'lov qabul qilinmaydi", () => {
+  const asos = {
+    contractId: "00000000-0000-4000-8000-000000000001",
+    requestKey: "00000000-0000-4000-8000-000000000002",
+  };
+  // USD to'lovda summa ham, kurs ham majburiy.
+  assert.equal(
+    paymentSchema.safeParse({ ...asos, method: "cash_usd", usdAmount: "100" })
+      .success,
+    false,
+  );
+  assert.equal(
+    paymentSchema.safeParse({ ...asos, method: "cash_usd", rate: 12800 })
+      .success,
+    false,
+  );
+  const ok = paymentSchema.parse({
+    ...asos,
+    method: "cash_usd",
+    usdAmount: "100.50",
+    rate: "12800",
+  });
+  assert.equal(ok.usdAmount, "100.50");
+  assert.equal(ok.rate, 12800);
+  assert.equal(ok.amount, undefined);
+  // So'm to'lovida summa majburiy.
+  assert.equal(
+    paymentSchema.safeParse({ ...asos, method: "cash" }).success,
+    false,
+  );
+  assert.equal(
+    paymentSchema.safeParse({ ...asos, method: "cash", amount: 500000 }).success,
+    true,
+  );
+  // Noto'g'ri dollar formati o'tmaydi.
+  for (const usd of ["100.555", "-5", "abc", ""])
+    assert.equal(
+      paymentSchema.safeParse({
+        ...asos,
+        method: "cash_usd",
+        usdAmount: usd,
+        rate: 12800,
+      }).success,
+      false,
+      usd,
     );
 });

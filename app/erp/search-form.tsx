@@ -53,7 +53,8 @@ export function SearchForm({
             To‘lov usuli
             <select name="method" defaultValue={filters.method}>
               <option value="">Barchasi</option>
-              <option value="cash">Naqd</option>
+              <option value="cash">Naqd UZS</option>
+              <option value="cash_usd">Naqd USD</option>
               <option value="card">Karta</option>
               <option value="transfer">O‘tkazma</option>
             </select>

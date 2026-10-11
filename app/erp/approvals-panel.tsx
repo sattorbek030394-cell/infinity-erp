@@ -2,6 +2,7 @@
 import { useState } from "react";
 import { useRouter } from "next/navigation";
 import { money, dateTime, methodNames } from "../../lib/filters";
+import { cashMoney } from "../../lib/cash-domain";
 import type { readPending } from "../../lib/payment-approval";
 
 type Pending = Awaited<ReturnType<typeof readPending>>;
@@ -98,7 +99,14 @@ export function ApprovalsPanel({
                   </small>
                 </td>
                 <td>{methodNames[p.method] ?? p.method}</td>
-                <td>{money(p.amount)}</td>
+                <td>
+                  {money(p.amount)}
+                  {p.usd_cents ? (
+                    <small>
+                      {cashMoney(p.usd_cents, "cash_usd")} × {money(p.rate)}
+                    </small>
+                  ) : null}
+                </td>
                 <td>{money(p.balance)}</td>
                 <td>{p.evidence || "—"}</td>
                 <td>{p.author ?? "—"}</td>

@@ -1,8 +1,9 @@
 import { z } from "zod";
 import { scope, AccessDeniedError } from "./auth";
 import { db, transaction } from "./db";
-import { can, assertPayment, type Amal } from "./domain";
+import { can, assertPayment, tasdiqAmal, TOLOV_USULLARI } from "./domain";
 import { postCashReceipt } from "./cash";
+import { tushumMinor } from "./cash-domain";
 import { yozAvans } from "./service";
 
 export const approvalSchema = z
@@ -15,10 +16,6 @@ export const approvalSchema = z
   .strict();
 export class ApprovalError extends Error {}
 
-/** Qaysi rol shu usuldagi tushumni tasdiqlaydi (PAY-06). */
-export const tasdiqAmal = (method: string): Amal =>
-  method === "cash" ? "payment.approve.cash" : "payment.approve.transfer";
-
 /**
  * Tasdiq kutayotgan tushumlar - rahbar va kassir ekrani.
  *
@@ -27,13 +24,11 @@ export const tasdiqAmal = (method: string): Amal =>
  */
 export async function readPending(branchId: string) {
   const s = await scope(branchId);
-  const usullar = ["cash", "card", "transfer"].filter((m) =>
-    can(s.role, tasdiqAmal(m)),
-  );
+  const usullar = TOLOV_USULLARI.filter((m) => can(s.role, tasdiqAmal(m)));
   const rows = usullar.length
     ? (
         await db.query(
-          `SELECT p.id,p.amount,p.method,p.evidence,p.created_at,p.contract_id,
+          `SELECT p.id,p.amount,p.advance_amount,p.usd_cents,p.rate,p.method,p.evidence,p.created_at,p.contract_id,
  c.customer_label,c.number,i.model,i.imei,u.email author,
  c.total-c.down_payment-COALESCE((SELECT sum(x.amount) FROM payments x
    WHERE x.contract_id=c.id AND x.status='approved' AND x.voided_at IS NULL),0) balance
@@ -137,7 +132,14 @@ export async function decidePayment(raw: unknown) {
     if (v.decision === "approve") {
       if (advance > 0)
         await yozAvans(c, s, payment.id, payment.contract_id, advance);
-      await postCashReceipt(c, s, payment.id, received, payment.method, "payment");
+      await postCashReceipt(
+        c,
+        s,
+        payment.id,
+        tushumMinor({ ...payment, amount: applied, advance_amount: advance }),
+        payment.method,
+        "payment",
+      );
     }
     await c.query(
       "INSERT INTO audit_events(user_id,tenant_id,branch_id,action,record_id) VALUES($1,$2,$3,$4,$5)",

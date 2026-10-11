@@ -31,6 +31,8 @@ export async function postCashReceipt(
   method: string,
   kind: "payment" | "down",
 ) {
+  // `amount` - hamyonning o'z birligida: USD hamyoniga sent, so'm
+  // hamyoniga so'm tushadi (tushumMinor).
   if (!amount) return;
   await wallets(c, s);
   await c.query(

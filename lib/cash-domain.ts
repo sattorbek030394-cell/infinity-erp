@@ -84,5 +84,25 @@ export function paymentWallet(method: string): Wallet {
     ? "card_uzs"
     : method === "transfer"
       ? "bank_uzs"
-      : "cash_uzs";
+      : method === "cash_usd"
+        ? "cash_usd"
+        : "cash_uzs";
+}
+
+/**
+ * To'lovdan hamyonga tushadigan summa, hamyonning o'z birligida.
+ *
+ * Naqd USD hamyonida dollar (sentda) saqlanadi, qolganlarida so'm.
+ * So'm hamyonida haqiqatda olingan pul = qarzga yo'naltirilgani + avansga
+ * tushgani (PAY-04).
+ */
+export function tushumMinor(payment: {
+  method: string;
+  amount: number | string;
+  advance_amount?: number | string | null;
+  usd_cents?: number | string | null;
+}) {
+  return payment.method === "cash_usd"
+    ? Number(payment.usd_cents)
+    : Number(payment.amount) + Number(payment.advance_amount ?? 0);
 }

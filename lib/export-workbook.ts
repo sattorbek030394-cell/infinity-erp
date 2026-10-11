@@ -125,7 +125,13 @@ export async function exportWorkbook(data: ExportData) {
       text(r.customer_label),
       text(r.imei),
       amount(r.amount),
-      r.method === "cash" ? "Naqd" : r.method === "card" ? "Karta" : "O‘tkazma",
+      r.method === "cash"
+        ? "Naqd UZS"
+        : r.method === "cash_usd"
+          ? "Naqd USD"
+          : r.method === "card"
+            ? "Karta"
+            : "O‘tkazma",
       text(r.payment_time),
       r.voided_at
         ? "Bekor qilingan — hisobga kirmaydi"
@@ -249,7 +255,13 @@ export async function exportWorkbook(data: ExportData) {
       text(r.imei),
       text(r.customer_label),
       amount(r.amount),
-      r.method === "cash" ? "Naqd" : r.method === "card" ? "Karta" : "O‘tkazma",
+      r.method === "cash"
+        ? "Naqd UZS"
+        : r.method === "cash_usd"
+          ? "Naqd USD"
+          : r.method === "card"
+            ? "Karta"
+            : "O‘tkazma",
       text(r.author),
     ]),
     [6],

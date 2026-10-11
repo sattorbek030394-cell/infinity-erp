@@ -2,6 +2,7 @@ import { scope } from "./auth";
 import { db } from "./db";
 import type { HistoryFilters } from "./filters";
 import type { ShartnomaMalumot } from "./shartnoma";
+import { kunlikKurs } from "./kurs";
 
 /**
  * Chop etiladigan shartnoma uchun ma'lumot.
@@ -87,6 +88,7 @@ export async function readContract(branchId: string, contractId: string) {
     contract: result.rows[0],
     installments: installments.rows,
     role: s.role,
+    kurs: await kunlikKurs(s.tenant_id),
   };
 }
 export async function readPaymentHistory(

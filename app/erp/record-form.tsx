@@ -8,11 +8,13 @@ export function RecordForm({
   kind,
   items,
   selectedId,
+  kurs = "",
 }: {
   branchId: string;
   kind: string;
   items: { id: string; label: string }[];
   selectedId?: string;
+  kurs?: string;
 }) {
   const router = useRouter();
   const [message, setMessage] = useState("");
@@ -22,9 +24,19 @@ export function RecordForm({
   const [hisob, setHisob] = useState<ReturnType<typeof nasiyaTotals> | null>(
     null,
   );
+  // To'lov usuli: USD tanlansa dollar va kurs so'raladi, so'm summasini
+  // dastur hisoblaydi (PAY-02).
+  const [usul, setUsul] = useState("cash");
+  const [som, setSom] = useState(0);
   function hisobla(form: HTMLFormElement) {
-    if (kind !== "contracts") return;
+    if (kind !== "contracts" && kind !== "payments") return;
     const d = Object.fromEntries(new FormData(form)) as Record<string, string>;
+    if (kind === "payments") {
+      const usd = Number(d.usdAmount),
+        kurs = Number(d.rate);
+      setSom(usd > 0 && kurs > 0 ? Math.round(usd * kurs) : 0);
+      return;
+    }
     try {
       setHisob(
         nasiyaTotals(
@@ -187,16 +199,52 @@ export function RecordForm({
               ))}
             </select>
           </label>
-          {field("amount", "To‘lov UZS", "number", 1)}
-          {ixtiyoriy("evidence", "Tranzaksiya raqami / dalil")}
           <label>
             Usul
-            <select name="method">
-              <option value="cash">Naqd</option>
-              <option value="card">Karta</option>
-              <option value="transfer">O‘tkazma</option>
+            <select
+              name="method"
+              value={usul}
+              onChange={(e) => setUsul(e.target.value)}
+            >
+              <option value="cash">Naqd UZS</option>
+              <option value="cash_usd">Naqd USD</option>
+              <option value="card">Karta (P2P)</option>
+              <option value="transfer">Hisob raqam</option>
             </select>
           </label>
+          {usul === "cash_usd" ? (
+            <>
+              <label>
+                Olingan dollar
+                <input
+                  name="usdAmount"
+                  required
+                  inputMode="decimal"
+                  pattern="\d{1,9}([.]\d{1,2})?"
+                  placeholder="100.50"
+                />
+              </label>
+              <label>
+                To‘lov kursi (1 USD = so‘m)
+                <input
+                  name="rate"
+                  type="number"
+                  required
+                  min={1}
+                  step={1}
+                  defaultValue={kurs || undefined}
+                />
+              </label>
+              {som ? (
+                <p className="hisob">
+                  Qarzga yo‘naltiriladi: <strong>{money(som)}</strong>
+                </p>
+              ) : null}
+            </>
+          ) : (
+            field("amount", "To‘lov UZS", "number", 1)
+          )}
+          {ixtiyoriy("evidence", "Tranzaksiya raqami / dalil")}
         </>
       ) : null}
       <button disabled={busy}>{busy ? "Saqlanmoqda…" : "Saqlash"}</button>

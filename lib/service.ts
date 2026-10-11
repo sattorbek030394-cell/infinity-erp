@@ -9,11 +9,14 @@ import {
   nasiyaTotals,
   assertPayment,
   can,
+  tasdiqAmal,
   type Amal,
 } from "./domain";
 import type { z } from "zod";
 import type { PoolClient } from "pg";
 import { postCashReceipt } from "./cash";
+import { minorUnits, tushumMinor } from "./cash-domain";
+import { kunlikKurs } from "./kurs";
 type Scope = {
   tenant_id: string;
   branch_id: string;
@@ -202,8 +205,10 @@ async function writeRecord(
       const p = prior.rows[0];
       if (
         p.contract_id !== v.contractId ||
-        Number(p.amount) !== v.amount ||
-        p.method !== v.method
+        p.method !== v.method ||
+        (v.amount !== undefined && Number(p.amount) !== v.amount) ||
+        (v.usdAmount !== undefined &&
+          Number(p.usd_cents) !== minorUnits(v.usdAmount, "cash_usd"))
       )
         throw new Error("Takroriy kalit mos emas");
       return p.id;
@@ -217,22 +222,29 @@ async function writeRecord(
       Number(contract.rows[0].down_payment) -
       Number(sum.rows[0].paid);
     if (balance <= 0) throw new Error("Bu shartnomada qarz qolmagan");
+    // PAY-02: dollarda olingan to'lov to'lov kursi bilan so'mga
+    // aylantiriladi; shartnoma kursi o'zgarmaydi.
+    const usdCents =
+      v.usdAmount === undefined ? null : minorUnits(v.usdAmount, "cash_usd");
+    const received =
+      usdCents === null
+        ? v.amount!
+        : Math.round((usdCents * v.rate!) / 100);
+    if (!Number.isSafeInteger(received) || received < 1)
+      throw new Error("To‘lov summasi noto‘g‘ri");
     // PAY-04: qarzdan ortiq summa rad etilmaydi - ortig'i mijoz avansi
     // bo'ladi. Qarz manfiy ko'rsatilmaydi.
-    const applied = Math.min(v.amount, balance);
-    const advance = v.amount - applied;
+    const applied = Math.min(received, balance);
+    const advance = received - applied;
     assertPayment(applied, balance);
     // PAY-06: naqdni kassir, P2P/bankni rahbar tasdiqlaydi. Kirituvchining
     // o'zida shu huquq bo'lsa to'lov darhol hisobga kiradi va tasdiqlovchi
     // sifatida u yoziladi; bo'lmasa tasdiq kutadi va qarzni kamaytirmaydi.
-    const tasdiq = can(
-      s.role,
-      v.method === "cash" ? "payment.approve.cash" : "payment.approve.transfer",
-    );
+    const tasdiq = can(s.role, tasdiqAmal(v.method));
     await c.query(
       `INSERT INTO payments(id,tenant_id,branch_id,contract_id,amount,advance_amount,method,request_key,
- evidence,created_by,status,decided_by,decided_at)
- VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13)`,
+ evidence,created_by,status,decided_by,decided_at,usd_cents,rate)
+ VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15)`,
       [
         id,
         s.tenant_id,
@@ -247,13 +259,22 @@ async function writeRecord(
         tasdiq ? "approved" : "pending",
         tasdiq ? s.userId : null,
         tasdiq ? new Date() : null,
+        usdCents,
+        usdCents === null ? null : v.rate,
       ],
     );
     if (tasdiq) {
       if (advance > 0) await yozAvans(c, s, id, v.contractId, advance);
-      // Kassaga haqiqatda olingan pul tushadi: qarzga yo'naltirilgani va
-      // avansga tushgani birgalikda.
-      await postCashReceipt(c, s, id, v.amount, v.method, "payment");
+      // Kassaga haqiqatda olingan pul o'z hamyonida tushadi: naqd USD
+      // hamyoniga dollar, so'm hamyoniga qarz va avans summasi birgalikda.
+      await postCashReceipt(
+        c,
+        s,
+        id,
+        tushumMinor({ method: v.method, amount: applied, advance_amount: advance, usd_cents: usdCents }),
+        v.method,
+        "payment",
+      );
     }
   } else throw new Error("Noto‘g‘ri modul");
   await c.query(
@@ -283,6 +304,7 @@ export async function readBranch(branchId: string) {
         args,
       )
     ).rows[0].total,
+    kurs: await kunlikKurs(s.tenant_id),
     // Mijoz avanslari qarzdan alohida yuritiladi (PAY-04).
     advances: (
       await db.query(
