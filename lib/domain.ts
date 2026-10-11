@@ -170,7 +170,9 @@ export type Amal =
   | "limit.override"
   | "customer.block"
   // iCloud/MDM nazorati: bloklash va ochish
-  | "device.control";
+  | "device.control"
+  // Oylik rejani belgilash
+  | "target.write";
 
 // Kichik do'kon haqiqati: kassir ayni paytda sotuvchi va omborchi ham.
 // Omborchi/sotuvchi rollari ajratilganda ularning huquqi shu jadvalda
@@ -192,6 +194,7 @@ const HUQUQLAR: Record<Rol, Amal[]> = {
     "limit.override",
     "customer.block",
     "device.control",
+    "target.write",
   ],
   manager: [
     "read",
@@ -208,6 +211,7 @@ const HUQUQLAR: Record<Rol, Amal[]> = {
     "limit.override",
     "customer.block",
     "device.control",
+    "target.write",
   ],
   cashier: [
     "read",

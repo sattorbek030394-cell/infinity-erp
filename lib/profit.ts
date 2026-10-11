@@ -1,5 +1,7 @@
 import { scope } from "./auth";
 import { db } from "./db";
+import { can } from "./domain";
+import { readTargets, METRICS, type Metric } from "./targets";
 
 /**
  * Oylik foyda hisoboti (TZ 6.9).
@@ -187,6 +189,50 @@ export async function readProfit(branchId: string, oyRaw: string, oylar = 6) {
     };
   });
 
+  // Undirish fakti: shu oyda tushgan tasdiqlangan nasiya to'lovlari.
+  const undirish = Number(
+    (
+      await db.query(
+        `SELECT COALESCE(sum(p.amount),0) summa FROM payments p
+ WHERE p.tenant_id=$1 AND p.branch_id=$2 AND p.status='approved' AND p.voided_at IS NULL
+ AND (p.created_at AT TIME ZONE 'Asia/Tashkent')::date>=$3::date
+ AND (p.created_at AT TIME ZONE 'Asia/Tashkent')::date<$3::date+interval '1 month'`,
+        [...args, boshi(oy)],
+      )
+    ).rows[0].summa,
+  );
+
+  // Oylik reja: plan, fakt, foiz, qolgan va kunlik kerakli natija.
+  const plan = await readTargets(branchId, oy);
+  const fakt: Record<Metric, number> = {
+    sotuv_dona_naqd: jadval[jadval.length - 1].naqdSoni,
+    sotuv_dona_nasiya: jadval[jadval.length - 1].nasiyaSoni,
+    sotuv_summa_naqd: jadval[jadval.length - 1].naqdNarx,
+    sotuv_summa_nasiya: jadval[jadval.length - 1].nasiyaNarx,
+    undirish,
+    sof_foyda: jadval[jadval.length - 1].sofFoyda,
+  };
+  // Kunlik norma faqat davom etayotgan oy uchun: yopilgan oyda qolgan kun yo'q.
+  const joriyOy = bugun.slice(0, 7) === oy;
+  const oyKunlari = new Date(Date.UTC(yil, oyRaqam, 0)).getUTCDate();
+  const qolganKun = joriyOy
+    ? Math.max(1, oyKunlari - Number(bugun.slice(8, 10)) + 1)
+    : 0;
+  const reja = METRICS.map((m) => {
+    const p = plan[m] ?? 0,
+      f = fakt[m];
+    const qolgan = Math.max(0, p - f);
+    return {
+      metric: m,
+      plan: p,
+      fakt: f,
+      // Plan nol bo'lsa foiz hisoblanmaydi (TZ 6.9).
+      foiz: p > 0 ? Math.round((f / p) * 100) : null,
+      qolgan: p > 0 ? qolgan : null,
+      kunlik: p > 0 && qolganKun ? Math.ceil(qolgan / qolganKun) : null,
+    };
+  });
+
   // Tanlangan oyning xarajatlari kategoriya bo'yicha.
   const kategoriyalar = (
     await db.query(
@@ -208,5 +254,8 @@ export async function readProfit(branchId: string, oyRaw: string, oylar = 6) {
     kategoriyalar,
     kurs,
     bugun,
+    reja,
+    qolganKun,
+    canEdit: can(s.role, "target.write"),
   };
 }

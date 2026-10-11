@@ -111,9 +111,18 @@ before(async () => {
 after(async () => {
   server?.kill();
   if (connection) {
+    // Tartib muhim: bola jadval ota jadvaldan oldin o'chadi.
     for (const table of [
       "audit_events",
       "cash_entries",
+      "monthly_targets",
+      "cash_closing_lines",
+      "cash_closings",
+      "supplier_settlements",
+      "supplier_obligations",
+      "device_controls",
+      "contract_closures",
+      "customer_advances",
       "payments",
       "cash_sales",
       "cash_operations",
@@ -122,11 +131,18 @@ after(async () => {
       "contracts",
       "customers",
       "inventory",
+      "suppliers",
+      "exchange_rates",
       "memberships",
       "nasiya_settings",
       "branches",
     ]) {
-      if (table === "installments")
+      if (table === "cash_closing_lines")
+        await pool.query(
+          "DELETE FROM cash_closing_lines WHERE closing_id IN (SELECT id FROM cash_closings WHERE tenant_id IN ($1,$2))",
+          [tenant, otherTenant],
+        );
+      else if (table === "installments")
         await pool.query(
           "DELETE FROM installments WHERE contract_id IN (SELECT id FROM contracts WHERE tenant_id IN ($1,$2))",
           [tenant, otherTenant],
@@ -3229,5 +3245,74 @@ test(
       { headers: { cookie: outsiderCookie } },
     );
     assert.equal(yomon.status, 200);
+  },
+);
+
+test(
+  "HTTP: oylik reja — plan, fakt, foiz va kunlik norma",
+  { skip: !connection },
+  async () => {
+    const auth = await login(admin + "@example.invalid");
+    const oy = (
+      await pool.query(
+        "SELECT to_char((now() AT TIME ZONE 'Asia/Tashkent')::date,'YYYY-MM') oy",
+      )
+    ).rows[0].oy;
+    const reja = (body: Record<string, unknown>, cookie = auth) =>
+      fetch(origin + "/api/targets", {
+        method: "POST",
+        headers: { cookie, origin, "content-type": "application/json" },
+        body: JSON.stringify({ branchId: b3, month: oy, ...body }),
+      });
+    // Ko'ruvchi reja belgilay olmaydi.
+    assert.equal(
+      (
+        await reja(
+          { values: { sof_foyda: 1 } },
+          await login(viewer + "@example.invalid"),
+        )
+      ).status,
+      403,
+    );
+    assert.equal(
+      (
+        await reja(
+          {
+            values: {
+              sotuv_dona_nasiya: 10,
+              sotuv_summa_nasiya: 100_000_000,
+              sof_foyda: 5_000_000,
+            },
+          },
+          outsiderCookie,
+        )
+      ).status,
+      200,
+    );
+    const html = await (
+      await fetch(origin + "/erp?branch=" + b3 + "&tab=profit&oy=" + oy, {
+        headers: { cookie: outsiderCookie },
+      })
+    ).text();
+    assert.ok(html.includes("Oylik reja"));
+    assert.ok(html.includes("Sof foyda"));
+    // Oldingi sinovda 1 ta nasiya sotuvi bo'lgan: 10 dan 1 tasi = 10%.
+    assert.ok(html.includes("10%"), "bajarilish foizi ko‘rinadi");
+    // Nol plan o'chiriladi va foiz hisoblanmaydi.
+    assert.equal(
+      (await reja({ values: { sotuv_dona_nasiya: 0 } }, outsiderCookie)).status,
+      200,
+    );
+    assert.equal(
+      Number(
+        (
+          await pool.query(
+            "SELECT count(*) n FROM monthly_targets WHERE branch_id=$1 AND metric='sotuv_dona_nasiya'",
+            [b3],
+          )
+        ).rows[0].n,
+      ),
+      0,
+    );
   },
 );

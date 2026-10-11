@@ -1,6 +1,7 @@
 import { money } from "../../lib/filters";
 import { cashMoney } from "../../lib/cash-domain";
 import type { readProfit } from "../../lib/profit";
+import { TargetForm } from "./target-form";
 
 const OYLAR = [
   "yanvar",
@@ -94,6 +95,13 @@ export function ProfitPanel({
           foyda taqsimoti — sof foydadan ayrilmagan.
         </aside>
       ) : null}
+      <TargetForm
+        branchId={branch}
+        month={report.oy}
+        rows={report.reja}
+        qolganKun={report.qolganKun}
+        canEdit={report.canEdit}
+      />
       <h2>Oylar bo‘yicha</h2>
       <table>
         <thead>
