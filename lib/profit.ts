@@ -1,6 +1,7 @@
 import { scope } from "./auth";
 import { db } from "./db";
 import { can } from "./domain";
+import { qarzSql } from "./qarz-sql";
 import { readTargets, METRICS, type Metric } from "./targets";
 
 /**
@@ -233,6 +234,73 @@ export async function readProfit(branchId: string, oyRaw: string, oylar = 6) {
     };
   });
 
+  // Sotuvchi va kanal natijalari (TZ REP). Nasiya va naqd alohida
+  // hisoblanadi, keyin bitta qatorga birlashtiriladi.
+  const kesim = async (ustun: "seller" | "channel") => {
+    const nas = await q(
+      `SELECT COALESCE(NULLIF(c.${ustun},''),'(ko''rsatilmagan)') nom, count(*) dona,
+ COALESCE(sum(COALESCE(c.principal,c.total-c.down_payment)+c.down_payment),0) narx,
+ COALESCE(sum(i.cost),0) tannarx, COALESCE(sum(COALESCE(c.markup,0)),0) ustama
+ FROM contracts c JOIN inventory i ON i.id=c.inventory_id AND i.tenant_id=c.tenant_id AND i.branch_id=c.branch_id
+ WHERE c.tenant_id=$1 AND c.branch_id=$2
+ AND c.start_date>=$4::date AND c.start_date<$4::date+interval '1 month'
+ GROUP BY 1`,
+    );
+    const naq = await q(
+      `SELECT COALESCE(NULLIF(sale.${ustun},''),'(ko''rsatilmagan)') nom, count(*) dona,
+ COALESCE(sum(sale.amount),0) narx, COALESCE(sum(i.cost),0) tannarx
+ FROM cash_sales sale JOIN inventory i ON i.id=sale.inventory_id AND i.tenant_id=sale.tenant_id AND i.branch_id=sale.branch_id
+ WHERE sale.tenant_id=$1 AND sale.branch_id=$2
+ AND (sale.created_at AT TIME ZONE 'Asia/Tashkent')::date>=$4::date
+ AND (sale.created_at AT TIME ZONE 'Asia/Tashkent')::date<$4::date+interval '1 month'
+ GROUP BY 1`,
+    );
+    const nomlar = [...new Set([...nas, ...naq].map((r) => r.nom as string))];
+    return nomlar
+      .map((nom) => {
+        const n = nas.find((r) => r.nom === nom),
+          k = naq.find((r) => r.nom === nom);
+        const nasiyaMarja = Number(n?.narx ?? 0) - Number(n?.tannarx ?? 0),
+          naqdMarja = Number(k?.narx ?? 0) - Number(k?.tannarx ?? 0);
+        return {
+          nom,
+          nasiyaDona: Number(n?.dona ?? 0),
+          nasiyaNarx: Number(n?.narx ?? 0),
+          nasiyaMarja,
+          // Shartnomada kelishilgan jami ustama: to'lovlar bilan birga
+          // daromadga aylanadi.
+          ustama: Number(n?.ustama ?? 0),
+          naqdDona: Number(k?.dona ?? 0),
+          naqdNarx: Number(k?.narx ?? 0),
+          naqdMarja,
+          marja: nasiyaMarja + naqdMarja,
+        };
+      })
+      .sort((a, b) => b.marja + b.ustama - (a.marja + a.ustama));
+  };
+  const sotuvchilar = await kesim("seller");
+  const kanallar = await kesim("channel");
+
+  // Ombor va nasiya portfeli - oyga bog'liq emas, hozirgi holat.
+  const ombor = (
+    await db.query(
+      `SELECT count(*) n, COALESCE(sum(cost),0) tannarx,
+ COALESCE(sum(CASE WHEN expected_price IS NOT NULL THEN expected_price-cost END),0) kutilgan,
+ count(expected_price) narxlangan
+ FROM inventory WHERE tenant_id=$1 AND branch_id=$2 AND status='available'`,
+      args,
+    )
+  ).rows[0];
+  const portfel = (
+    await db.query(
+      `SELECT COALESCE(sum(COALESCE(c.principal,c.total-c.down_payment)),0) asosiy,
+ COALESCE(sum(COALESCE(c.markup,0)),0) ustama,
+ COALESCE(sum(GREATEST(${qarzSql()},0)),0) qoldiq
+ FROM contracts c WHERE c.tenant_id=$1 AND c.branch_id=$2`,
+      args,
+    )
+  ).rows[0];
+
   // Tanlangan oyning xarajatlari kategoriya bo'yicha.
   const kategoriyalar = (
     await db.query(
@@ -256,6 +324,10 @@ export async function readProfit(branchId: string, oyRaw: string, oylar = 6) {
     bugun,
     reja,
     qolganKun,
+    sotuvchilar,
+    kanallar,
+    ombor,
+    portfel,
     canEdit: can(s.role, "target.write"),
   };
 }

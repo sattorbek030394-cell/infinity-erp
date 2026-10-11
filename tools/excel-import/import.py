@@ -158,12 +158,15 @@ def main(src, outdir, tanlangan):
                           rate(dt, K.cell(r, 15).value) or None, supplier(K.cell(r, 16).value)])
 
     # ---------- Chiqim -> sotilgan belgisi
-    sold, sale_date = set(), {}
+    sold, sale_date, sotuvchi, kanal = set(), {}, {}, {}
     for r in range(2, (C.max_row + 1) if C else 2):
         imei, dt = s(C.cell(r, 3).value), d(C.cell(r, 2).value)
         if not imei or not dt or imei not in dev:
             continue
         sold.add(imei); sale_date[imei] = dt
+        # Sotuvchi va kanal shartnomaga yoziladi (TZ SALE-01).
+        sotuvchi[imei] = txt(C.cell(r, 19).value)[:80]
+        kanal[imei] = txt(C.cell(r, 20).value)[:40]
         rate(dt, C.cell(r, 18).value)
 
     # ---------- Nasiya -> customers + contracts + installments
@@ -203,7 +206,8 @@ def main(src, outdir, tanlangan):
         contracts.append([kid, TENANT, BRANCH, dev[imei], txt(N.cell(r, 5).value) or "?", total, down,
                           months, dt, int(raqam), cid, cents(N.cell(r, 16).value),
                           rate(dt, N.cell(r, 17).value) or None,
-                          int(round(num(N.cell(r, 22).value, 0.05) * 10000)), principal, markup])
+                          int(round(num(N.cell(r, 22).value, 0.05) * 10000)), principal, markup,
+                          sotuvchi.get(imei, ""), kanal.get(imei, "")])
         monthly = soum(N.cell(r, 25).value)
         left = total - down        # grafik faqat qolgan summaga tuziladi
         for i in range(1, months + 1):
@@ -278,7 +282,8 @@ def main(src, outdir, tanlangan):
          customers, "(id)"),
         ("contracts", ["id", "tenant_id", "branch_id", "inventory_id", "customer_label", "total",
                        "down_payment", "months", "start_date", "number", "customer_id",
-                       "price_usd_cents", "rate", "monthly_rate_bp", "principal", "markup"],
+                       "price_usd_cents", "rate", "monthly_rate_bp", "principal", "markup",
+                       "seller", "channel"],
          contracts, "(id)"),
         ("installments", ["contract_id", "sequence", "due_date", "amount"],
          installments, "(contract_id,sequence)"),

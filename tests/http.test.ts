@@ -3316,3 +3316,79 @@ test(
     );
   },
 );
+
+test(
+  "HTTP: sotuvchi va kanal natijalari, ombor va portfel",
+  { skip: !connection },
+  async () => {
+    const oy = (
+      await pool.query(
+        "SELECT to_char((now() AT TIME ZONE 'Asia/Tashkent')::date,'YYYY-MM') oy",
+      )
+    ).rows[0].oy;
+    const bugun = (
+      await pool.query(
+        "SELECT (now() AT TIME ZONE 'Asia/Tashkent')::date::text d",
+      )
+    ).rows[0].d;
+    // b3 filialida: tannarx 4 mln, prognoz 6 mln qurilma.
+    const item = (
+      await (
+        await post(
+          "inventory",
+          {
+            imei: "722222222222222",
+            model: "SYNTHETIC KANAL",
+            cost: 4_000_000,
+            expectedPrice: 6_000_000,
+          },
+          b3,
+          outsiderCookie,
+        )
+      ).json()
+    ).id;
+    // Nasiya sotuvi: sotuvchi va kanal bilan.
+    assert.equal(
+      (
+        await post(
+          "contracts",
+          {
+            inventoryId: item,
+            customerName: "SYNTHETIC KANAL mijoz",
+            priceUzs: 5_000_000,
+            downPayment: 1_000_000,
+            months: 4,
+            monthlyRateBp: 500,
+            startDate: bugun,
+            seller: "SYNTHETIC Jahongir",
+            channel: "Instagram",
+          },
+          b3,
+          outsiderCookie,
+        )
+      ).status,
+      200,
+    );
+    const row = (
+      await pool.query(
+        "SELECT seller,channel FROM contracts WHERE inventory_id=$1",
+        [item],
+      )
+    ).rows[0];
+    assert.equal(row.seller, "SYNTHETIC Jahongir");
+    assert.equal(row.channel, "Instagram");
+    const html = await (
+      await fetch(origin + "/erp?branch=" + b3 + "&tab=profit&oy=" + oy, {
+        headers: { cookie: outsiderCookie },
+      })
+    ).text();
+    assert.ok(html.includes("Sotuvchilar"));
+    assert.ok(html.includes("SYNTHETIC Jahongir"));
+    assert.ok(html.includes("Sotuv kanallari"));
+    assert.ok(html.includes("Instagram"));
+    assert.ok(html.includes("Ombordagi tovar"));
+    assert.ok(html.includes("Nasiya portfeli"));
+    // Sotuvchi ko'rsatilmagan sotuv ham ro'yxatda ko'rinadi.
+    assert.ok(html.includes("ko‘rsatilmagan"));
+  },
+);

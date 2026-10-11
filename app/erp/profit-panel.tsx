@@ -95,6 +95,32 @@ export function ProfitPanel({
           foyda taqsimoti — sof foydadan ayrilmagan.
         </aside>
       ) : null}
+      <div className="cards">
+        <section>
+          <h2>Ombordagi tovar</h2>
+          <strong>{report.ombor.n} dona</strong>
+          <p>
+            Tannarxi {money(report.ombor.tannarx)}
+            {Number(report.ombor.narxlangan) ? (
+              <>
+                {" "}
+                • kutilayotgan foyda {money(report.ombor.kutilgan)} (
+                {report.ombor.narxlangan} donaga narx qo‘yilgan)
+              </>
+            ) : (
+              " • prognoz narx kiritilmagan"
+            )}
+          </p>
+        </section>
+        <section>
+          <h2>Nasiya portfeli</h2>
+          <strong>{money(report.portfel.qoldiq)}</strong>
+          <p>
+            Asosiy qarz {money(report.portfel.asosiy)} • kelishilgan ustama{" "}
+            {money(report.portfel.ustama)}
+          </p>
+        </section>
+      </div>
       <TargetForm
         branchId={branch}
         month={report.oy}
@@ -142,6 +168,87 @@ export function ProfitPanel({
           ))}
         </tbody>
       </table>
+      {report.sotuvchilar.length ? (
+        <>
+          <h2>Sotuvchilar — {oyNomi(report.oy)}</h2>
+          <table>
+            <thead>
+              <tr>
+                <th>Sotuvchi</th>
+                <th>Nasiya (dona / summa)</th>
+                <th>Nasiya marjasi</th>
+                <th>Kelishilgan ustama</th>
+                <th>Naqd (dona / summa)</th>
+                <th>Naqd marjasi</th>
+                <th>Jami marja</th>
+              </tr>
+            </thead>
+            <tbody>
+              {report.sotuvchilar.map((r) => (
+                <tr key={r.nom}>
+                  <td>{r.nom}</td>
+                  <td>
+                    {r.nasiyaDona} dona
+                    <small>{money(r.nasiyaNarx)}</small>
+                  </td>
+                  <td>{money(r.nasiyaMarja)}</td>
+                  <td>{money(r.ustama)}</td>
+                  <td>
+                    {r.naqdDona} dona
+                    <small>{money(r.naqdNarx)}</small>
+                  </td>
+                  <td>{money(r.naqdMarja)}</td>
+                  <td>
+                    <strong>{money(r.marja)}</strong>
+                  </td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+          <p>
+            “Kelishilgan ustama” — shu oyda tuzilgan shartnomalarning jami
+            ustamasi. U to‘lovlar tushgani sari daromadga aylanadi, shuning
+            uchun marjaga qo‘shilmagan.
+          </p>
+        </>
+      ) : null}
+      {report.kanallar.length ? (
+        <>
+          <h2>Sotuv kanallari — {oyNomi(report.oy)}</h2>
+          <table>
+            <thead>
+              <tr>
+                <th>Kanal</th>
+                <th>Sotuv (dona)</th>
+                <th>Sotuv summasi</th>
+                <th>Marja</th>
+                <th>Kelishilgan ustama</th>
+              </tr>
+            </thead>
+            <tbody>
+              {report.kanallar.map((r) => (
+                <tr key={r.nom}>
+                  <td>{r.nom}</td>
+                  <td>
+                    {r.nasiyaDona + r.naqdDona}
+                    <small>
+                      nasiya {r.nasiyaDona} • naqd {r.naqdDona}
+                    </small>
+                  </td>
+                  <td>{money(r.nasiyaNarx + r.naqdNarx)}</td>
+                  <td>{money(r.marja)}</td>
+                  <td>{money(r.ustama)}</td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+          <p>
+            Mijoz qaysi kanaldan kelgani sotuv paytida belgilanadi. Reklama
+            xarajatini shu jadval bilan solishtirib, bir mijoz qancha turgani
+            ko‘rinadi.
+          </p>
+        </>
+      ) : null}
       {report.kategoriyalar.length ? (
         <>
           <h2>{oyNomi(report.oy)} xarajatlari</h2>

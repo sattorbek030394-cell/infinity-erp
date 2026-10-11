@@ -92,6 +92,22 @@ export function SaleForm({
           placeholder="Maxfiy hujjatsiz"
         />
       </label>
+      <label>
+        Sotuvchi
+        <input name="seller" maxLength={80} />
+      </label>
+      <label>
+        Sotuv kanali
+        <select name="channel" defaultValue="">
+          <option value="">—</option>
+          <option value="Bozor">Bozor</option>
+          <option value="Instagram">Instagram</option>
+          <option value="Telegram">Telegram</option>
+          <option value="Eski mijoz">Eski mijoz</option>
+          <option value="Tavsiya">Tavsiya</option>
+          <option value="Boshqa">Boshqa</option>
+        </select>
+      </label>
       <p>
         Summa to‘liq olingan bo‘lsin. Qurilma sotilgan deb belgilanadi. V1 da
         savdoni bekor qilish va qaytarish hali yo‘q.

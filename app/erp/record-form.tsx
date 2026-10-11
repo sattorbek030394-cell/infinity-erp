@@ -225,6 +225,19 @@ export function RecordForm({
             />
           </label>
           {field("startDate", "Boshlanish sanasi", "date")}
+          {ixtiyoriy("seller", "Sotuvchi")}
+          <label>
+            Sotuv kanali
+            <select name="channel" defaultValue="">
+              <option value="">—</option>
+              <option value="Bozor">Bozor</option>
+              <option value="Instagram">Instagram</option>
+              <option value="Telegram">Telegram</option>
+              <option value="Eski mijoz">Eski mijoz</option>
+              <option value="Tavsiya">Tavsiya</option>
+              <option value="Boshqa">Boshqa</option>
+            </select>
+          </label>
           {ixtiyoriy(
             "limitOverrideReason",
             "Limitdan oshsa: rahbar sababi",

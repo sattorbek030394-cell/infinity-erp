@@ -64,7 +64,7 @@ export async function createSale(raw: unknown) {
       hash,
     ]);
     await c.query(
-      "INSERT INTO cash_sales(id,tenant_id,branch_id,inventory_id,amount,method,customer_label,user_id,request_key) VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9)",
+      "INSERT INTO cash_sales(id,tenant_id,branch_id,inventory_id,amount,method,customer_label,user_id,request_key,seller,channel) VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11)",
       [
         id,
         s.tenant_id,
@@ -75,6 +75,8 @@ export async function createSale(raw: unknown) {
         v.customerLabel,
         s.userId,
         v.requestKey,
+        v.seller,
+        v.channel,
       ],
     );
     const wallet = paymentWallet(v.method);

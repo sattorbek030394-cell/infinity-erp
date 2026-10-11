@@ -95,6 +95,9 @@ export const contractSchema = z
     startDate: z.iso.date(),
     // Mijoz limitidan oshsa rahbar sababini yozib o'tkazadi (taklif 3.1).
     limitOverrideReason: ixtiyoriy(z.string().trim().min(5).max(160)),
+    // Kim sotdi va mijoz qayerdan keldi (TZ SALE-01).
+    seller: matn(80),
+    channel: matn(40),
   })
   .refine((v) => v.customerName || v.customerLabel, {
     message: "Mijoz ismini yozing",

@@ -16,5 +16,7 @@ export const saleSchema = z
     amount,
     method: z.enum(["cash", "card", "transfer"]),
     customerLabel: z.string().trim().max(80).default(""),
+    seller: z.string().trim().max(80).default(""),
+    channel: z.string().trim().max(40).default(""),
   })
   .strict();

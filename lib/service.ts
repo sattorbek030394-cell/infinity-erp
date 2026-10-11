@@ -326,9 +326,9 @@ async function writeRecord(
     await c.query(
       `INSERT INTO contracts(id,tenant_id,branch_id,inventory_id,customer_id,customer_label,number,
  total,down_payment,principal,markup,monthly_rate_bp,months,start_date,
- limit_override_by,limit_override_reason)
+ limit_override_by,limit_override_reason,seller,channel)
  VALUES($1,$2,$3,$4,$5,$6,(SELECT COALESCE(max(number),0)+1 FROM contracts WHERE tenant_id=$2),
- $7,$8,$9,$10,$11,$12,$13,$14,$15)`,
+ $7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17)`,
       [
         id,
         s.tenant_id,
@@ -345,6 +345,8 @@ async function writeRecord(
         v.startDate,
         override ? s.userId : null,
         override,
+        v.seller,
+        v.channel,
       ],
     );
     for (const p of schedule(total, v.downPayment, v.months, v.startDate))
