@@ -192,10 +192,53 @@ ham teskari qiladi va qarz qaytadi.
 matn tayyor bo'ladi va bir bosishda nusxalanadi — Telegram yoki SMS ga
 qo'yib yuborasiz. Telefon raqami yonida, bosilsa qo'ng'iroq qiladi.
 
+### Nasiya berish qarori
+
+Shartnoma tuzishda dastur mijozni tekshiradi:
+
+- **Qora ro'yxat.** Shartnoma sahifasidagi mijoz kartochkasidan mijozni
+  qora ro'yxatga qo'shasiz (sabab majburiy). Unga yangi nasiya berilmaydi;
+  eski shartnomalari o'z holicha qoladi.
+- **Limit.** Bir mijozda ko'pi bilan **2 ta faol shartnoma** va **25 mln
+  so'm jami qarz**. Oshsa, rahbar sabab yozib o'tkazadi va shartnomada kim
+  ruxsat bergani qoladi. **40 mln** dan oshishga hech kim ruxsat bermaydi.
+  Bu raqamlar sizning 150 shartnomangiz tahlilidan chiqdi — tafsiloti
+  `docs/TZ_TAKLIFLAR.md` da. Kerak bo'lsa `nasiya_settings` jadvalidan
+  o'zgartiriladi.
+- Tekshiruv **PNFL bo'yicha** ishlaydi: PNFL yozilmasa mijoz yangi deb
+  qabul qilinadi.
+
+### Qurilma nazorati (iCloud / MDM)
+
+Shartnoma sahifasida "Qurilma nazorati" bo'limi: nazoratga olindi →
+bloklandi → ochildi → nazoratdan chiqarildi. Har qaror kim, qachon, nega,
+qanday kechikishda va qancha qarzda qabul qilganini saqlaydi.
+
+Qarz yopilgach nazoratni ochish majburiy: Dashboardda **"Nazorat
+ochilmagan"** soni chiqadi.
+
+⚠️ Bloklash huquqi shartnoma matnida yozilgan bo'lishi kerak. Hozirgi
+shartnoma matnida bu band bormi — yurist bilan tekshiring.
+
+### Undiruvchi qo'lidagi pul
+
+Undiruvchi mijoz uyida naqd olsa, pul **kassirga topshirilmaguncha**
+hisobga kirmaydi: Dashboardda "Undiruvchi qo'lida" summasi ko'rinadi.
+Kassir tasdiqlaganda kassaga tushadi.
+
+### Kechikish guruhlari va zaxira
+
+"Qarzdorlar" bo'limida 1–30, 31–60, 61–90 va 91+ kunlik guruhlar hamda
+**5% zaxira** ko'rsatkichi. Zaxira — portfeldan kutilayotgan qaytmaydigan
+qarz; hisob yozuvi emas, ogohlantirish. Kechikish uchun **jarima yo'q**.
+
 Hali yo'q:
 
 - **Kirim (ombor) maydonlari formada.** Brend, xotira, rang, holat, batareya,
   yetkazib beruvchi — bazada bor, ekranda hali yo'q.
+- **Aksessuar va xizmat sotuvi** (chexol, oyna, remont) — model hozircha
+  faqat IMEI'li qurilmani biladi.
+- **Kafil, minimal sotuv narxi va sotuvchi bonusi** — qaror kutilmoqda.
 - **Kassa daftari va investorlar** Excel'dan ko'chmaydi.
 - **Hisobot ekrani.** Plan–fakt va 12 oylik jadval hozircha Excelda.
 

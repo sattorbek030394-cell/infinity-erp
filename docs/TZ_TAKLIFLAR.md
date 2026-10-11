@@ -189,14 +189,62 @@ Topshiriqdagi tartib to'g'ri. Ikki o'zgarish taklif qilaman:
 Qolgan hamma narsa — avval hisob, keyin ekran, keyin hisobot — o'z
 tartibida.
 
-## 6. Ochiq qarorlar ro'yxatiga qo'shish
+## 6. Qabul qilingan qarorlar (11.10.2026)
+
+| Qaror | Javob | Kodda |
+|---|---|---|
+| Penya (kechikish jarimasi) | **Yo'q** | Hisobotda ham "jarima yo'q" deb yozilgan |
+| Qaytmaydigan qarz zaxirasi | **Maksimum 5%** | `nasiya_settings.reserve_bp = 500`; qarzdorlar ekranida ko'rsatkich |
+| Aksessuar ERPda | **Yaqin orada yo'lga qo'yiladi** | Hali yo'q: model faqat IMEI'li qurilmani biladi |
+| Mijoz limiti | **Hisoblab berish so'raldi** | Hisoblandi, pastda |
+| Administrator va rahbar bir odam | Hozircha bir odam | `admin` tasdiqlash huquqini ham oldi |
+| Kafil majburiymi | Hali aniq emas | Kutilmoqda |
+| Minimal sotuv narxi | Hali aniq emas | Kutilmoqda |
+| Sotuvchi bonusi | Hali aniq emas | Kutilmoqda |
+
+### Mijoz limiti — 150 shartnoma tahlilidan
+
+| Ko'rsatkich | Qiymat |
+|---|---|
+| Mijoz soni / shartnoma | 139 / 150 |
+| Bitta shartnomali mijoz | 129 ta, kechikish **6.5%** |
+| Ikkita shartnomali | 9 ta, kechikish **7.6%** |
+| Uchta shartnomali | 1 ta, kechikish **25.1%** |
+| Bir mijozdagi qoldiq | median 6.2 mln, 90-protsentil 13.7 mln, eng katta 20.7 mln |
+| Eng katta bitta shartnoma | 21.7 mln (Iphone 17 Pro Max) |
+
+Shundan kelib chiqib qo'yilgan chegara:
+
+- **2 ta faol shartnoma** — uchinchisiga rahbar sababi kerak. Uchta
+  shartnomali yagona mijozda kechikish uch baravar yuqori.
+- **25 mln so'm jami qarz** — hozirgi birorta mijozni to'xtatmaydi (eng
+  kattasi 20.7 mln), eng katta bitta telefonni ham (21.7 mln) sig'diradi,
+  lekin bir mijozning ta'sirini portfelning ~3% bilan cheklaydi.
+- **Qattiq chegara 40 mln** — undan oshishga rahbar ham ruxsat bermaydi.
+
+Nega muhim: 5% zaxira 870 mln portfelda 43.5 mln. Bitta 25 mln lik
+mijoz qaytarmasa, bu yillik zarar budjetining yarmi. Chegarasiz bir
+mijoz uchta 20 mln lik telefon olib, 60 mln ta'sir yaratishi mumkin.
+
+### Boshqa tahlil natijalari (keyingi qarorlar uchun)
+
+- **Kichik shartnomalar yomonroq to'lanadi:** 0–5 mln da kechikish 15.1%,
+  15–25 mln da 5.8%. Qimmat telefon yaxshi mijozga ketadi.
+- **Qisqa muddat yomonroq:** 1–3 oylik shartnomalarda kechikish 12–64%,
+  8–12 oylik shartnomalarda 0–5%. Uzoq muddat — kamroq kechikish va
+  ko'proq ustama.
+- **Boshlang'ich to'lov ulushi kechikishni kamaytirmaydi:** 25% dan kam
+  bergan mijozlarda kechikish 4.7%, 50% dan ko'p berganlarda 9.2%.
+  Ya'ni "ko'p boshlang'ich — ishonchli mijoz" qoidasi bu ma'lumotda
+  ishlamaydi.
+- **Kechikish guruhlari:** 1–30 kun 25.6 mln (28 shartnoma), 31–60 kun
+  11.7 mln (6), 61–90 kun 8.8 mln (2), 91+ kun 7.3 mln (1).
+
+## 7. Hali ochiq qarorlar
 
 | Qaror | Nega kerak |
 |---|---|
 | Administrator va rahbar bir odammi? | Hozir kodda `admin` tasdiqlash huquqini ham oldi. Xodim ko'paysa ajratiladi |
-| Penya bor/yo'q | Hisobot va shartnoma matniga ta'sir qiladi |
 | Kafil majburiymi yoki summadan oshganda | Shartnoma shabloni o'zgaradi |
 | iCloud bloklash shartnomada yozilganmi | Yuridik xavf |
-| Aksessuar ERPda yuritiladimi | Ma'lumotlar modeliga ta'sir qiladi |
-| Qaytmaydigan qarz zaxirasi foizi | Foyda hisobotining haqiqiyligi |
 | Muddat chegarasi: 12 yoki 36 oy | Topshiriqning o'zida ikki xil |
