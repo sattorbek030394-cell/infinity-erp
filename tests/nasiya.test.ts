@@ -1,6 +1,6 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
-import { nasiyaTotals, schedule } from "../lib/domain";
+import { contractSchema, nasiyaTotals, schedule } from "../lib/domain";
 
 test("ustama oddiy foiz: asosiy qarz * oylik foiz * muddat", () => {
   // Excel'dagi 1-shartnoma: narx 5 535 000, boshlang'ich 3 690 000,
@@ -60,5 +60,74 @@ test("noto'g'ri shartlarni rad etadi", () => {
     assert.throws(
       () => nasiyaTotals(...args),
       `qabul qilmasligi kerak: ${args}`,
+    );
+});
+
+test("forma to'ldirilmagan maydonlarni bo'sh satr bilan yuborsa ham o'tadi", () => {
+  const v = contractSchema.parse({
+    inventoryId: "00000000-0000-4000-8000-000000000001",
+    customerName: "Salieva Azima",
+    pnfl: "",
+    passport: "",
+    passportIssuer: "",
+    passportDate: "",
+    birthDate: "",
+    phone1: "+998 90 123 45 67",
+    phone2: "",
+    address: "",
+    icloudAccount: "",
+    icloudPhone: "",
+    priceUzs: "17028900",
+    downPayment: "3570000",
+    months: "6",
+    monthlyRateBp: "500",
+    startDate: "2026-09-25",
+  });
+  assert.equal(v.pnfl, undefined);
+  assert.equal(v.birthDate, undefined);
+  assert.equal(v.priceUzs, 17_028_900);
+  assert.equal(v.monthlyRateBp, 500);
+  assert.equal(v.downPaymentMethod, "cash");
+});
+
+test("mijoz ismi yoki belgisi bo'lmasa qabul qilinmaydi", () => {
+  const asos = {
+    inventoryId: "00000000-0000-4000-8000-000000000001",
+    priceUzs: 9_000_000,
+    downPayment: 1_000_000,
+    months: 6,
+    startDate: "2026-09-25",
+  };
+  assert.equal(contractSchema.safeParse(asos).success, false);
+  assert.equal(
+    contractSchema.safeParse({ ...asos, customerLabel: "eski belgi" }).success,
+    true,
+    "eski yo'l ishlashda davom etadi",
+  );
+  assert.equal(
+    contractSchema.safeParse({ ...asos, customerName: "Salieva Azima" })
+      .success,
+    true,
+  );
+});
+
+test("noto'g'ri PNFL, narx va boshlang'ich rad etiladi", () => {
+  const asos = {
+    inventoryId: "00000000-0000-4000-8000-000000000001",
+    customerName: "Salieva Azima",
+    months: 6,
+    startDate: "2026-09-25",
+  };
+  for (const yomon of [
+    { ...asos, priceUzs: 9_000_000, downPayment: 0, pnfl: "123" },
+    { ...asos, priceUzs: 9_000_000, downPayment: 0, pnfl: "5123456789012a" },
+    { ...asos, downPayment: 0 },
+    { ...asos, priceUzs: 9_000_000, downPayment: 9_000_000 },
+    { ...asos, priceUzs: 9_000_000, downPayment: 0, monthlyRateBp: 10_001 },
+  ])
+    assert.equal(
+      contractSchema.safeParse(yomon).success,
+      false,
+      JSON.stringify(yomon),
     );
 });

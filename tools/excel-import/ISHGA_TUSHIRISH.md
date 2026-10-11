@@ -126,14 +126,25 @@ chiqmaydi.
 muhitida `npm` paketlari yuklanmadi. Birinchi ochganingizda bir-ikki joyda
 xato chiqishi mumkin; skrinshot yuboring, tuzataman.
 
-Shuningdek hali yo'q:
+Shartnoma tuzish ekrani to'liq ishlaydi:
 
-- **Ustama hisobi.** Yangi shartnoma tuzsangiz, jami summani qo'lda
-  kiritasiz — dastur 5% ustamani o'zi hisoblamaydi. Baza tayyor, kod emas.
-- **Shartnoma PDF.** Chop etish Excelda qoladi.
-- **Mijoz maydonlari formada.** Pasport va PNFL bazada bor, lekin shartnoma
-  yaratish ekranida hali bitta "mijoz" maydon.
-- **Kassa daftari va investorlar** ko'chmaydi.
+- **Ustama o'zi hisoblanadi.** Narx, boshlang'ich, muddat va oylik foizni
+  kiritganda asosiy qarz, ustama, jami va oylik to'lov darhol ekranda
+  ko'rinadi — mijozga aytiladigan summa shu. Bazaga ham shu yoziladi.
+- **Mijoz kartochkasi.** F.I.Sh., PNFL, pasport (kim va qachon bergani),
+  tug'ilgan sana, ikki telefon, manzil va iCloud maydonlari bor. PNFL bir xil
+  bo'lsa, mijoz ikkinchi marta telefon olganda yangi kartochka ochilmaydi.
+- **Shartnomani chop etish.** Shartnoma sahifasida "N - sonli shartnomani
+  chop etish" havolasi bor: brauzerda ochiladi, Ctrl+P bilan chop etiladi
+  yoki PDF qilib saqlanadi. Matn Excel'dagi "Shartnoma (yangi)" varag'idan
+  so'zma-so'z olingan.
 
-Shuning uchun birinchi hafta Excel'ni yopmang: yangi shartnomani Excelda
-tuzing, dasturni qarzdorlarni ko'rish va to'lov kiritish uchun ishlating.
+Hali yo'q:
+
+- **Kirim (ombor) maydonlari formada.** Brend, xotira, rang, holat, batareya,
+  yetkazib beruvchi — bazada bor, ekranda hali yo'q.
+- **Kassa daftari va investorlar** Excel'dan ko'chmaydi.
+- **Hisobot ekrani.** Plan–fakt va 12 oylik jadval hozircha Excelda.
+
+Shuning uchun birinchi hafta Excel'ni yopmang: dasturda tuzgan shartnomani
+Excelga ham kiriting va raqamlarni solishtirib turing.

@@ -112,6 +112,14 @@ button:disabled {
 .entry p {
   width: 100%;
 }
+.hisob {
+  background: #eef6f5;
+  border: 1px solid #b7d4d1;
+  border-radius: 8px;
+  padding: 12px;
+  font-size: 14px;
+  line-height: 1.7;
+}
 table {
   width: 100%;
   background: white;

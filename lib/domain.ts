@@ -5,18 +5,58 @@ export const itemSchema = z.object({
   model: z.string().trim().min(1).max(100),
   cost: money,
 });
+// Oylik ustama bazis punktda: 500 = oyiga 5%. Butun son bo'lgani uchun
+// kasr xatosi yig'ilmaydi.
+export const rateBp = z.coerce.number().int().min(0).max(10000);
+
+// Formadan to'ldirilmagan maydon bo'sh satr bo'lib keladi. Bo'sh satrni
+// "berilmagan" deb olamiz, aks holda sana va PNFL tekshiruvi bo'sh joyda
+// yiqiladi.
+const matn = (max: number) => z.string().trim().max(max).default("");
+const ixtiyoriy = <T extends z.ZodType>(s: T) =>
+  z.preprocess(
+    (x) => (typeof x === "string" ? x.trim() || undefined : x),
+    s.optional(),
+  );
+
 export const contractSchema = z
   .object({
     inventoryId: z.uuid(),
-    customerLabel: z.string().trim().min(1).max(80),
-    total: money,
+    // Mijoz kartochkasi. Ism berilsa mijoz `customers` ga yoziladi; PNFL
+    // berilsa, shu PNFL bilan mavjud mijoz qayta ishlatiladi.
+    customerName: ixtiyoriy(z.string().trim().min(1).max(160)),
+    // Eski yo'l: hujjatsiz belgi. Ism berilmasa shu ishlatiladi.
+    customerLabel: ixtiyoriy(z.string().trim().min(1).max(80)),
+    pnfl: ixtiyoriy(
+      z.string().regex(/^\d{5,20}$/, "PNFL 5-20 raqamdan bo‘lsin"),
+    ),
+    passport: matn(40),
+    passportIssuer: matn(120),
+    passportDate: ixtiyoriy(z.iso.date()),
+    birthDate: ixtiyoriy(z.iso.date()),
+    phone1: matn(40),
+    phone2: matn(40),
+    address: matn(200),
+    icloudAccount: matn(120),
+    icloudPhone: matn(40),
+    // Qurilma narxi. Berilsa ustamani dastur hisoblaydi.
+    priceUzs: ixtiyoriy(money),
+    // Eski yo'l: ustama qo'shilgan jami summa qo'lda kiritiladi.
+    total: ixtiyoriy(money),
     downPayment: z.coerce.number().int().min(0),
     downPaymentMethod: z.enum(["cash", "card", "transfer"]).default("cash"),
     months: z.coerce.number().int().min(1).max(36),
+    monthlyRateBp: ixtiyoriy(rateBp),
     startDate: z.iso.date(),
   })
-  .refine((v) => v.downPayment < v.total, {
-    message: "Boshlang‘ich to‘lov jami summadan kichik bo‘lsin",
+  .refine((v) => v.customerName || v.customerLabel, {
+    message: "Mijoz ismini yozing",
+  })
+  .refine((v) => v.priceUzs !== undefined || v.total !== undefined, {
+    message: "Narxni yozing",
+  })
+  .refine((v) => v.downPayment < (v.priceUzs ?? v.total ?? 0), {
+    message: "Boshlang‘ich to‘lov narxdan kichik bo‘lsin",
   });
 export const paymentSchema = z.object({
   contractId: z.uuid(),
@@ -65,10 +105,6 @@ export function schedule(
     };
   });
 }
-// Oylik ustama bazis punktda: 500 = oyiga 5%. Butun son bo'lgani uchun
-// kasr xatosi yig'ilmaydi.
-export const rateBp = z.coerce.number().int().min(0).max(10000);
-
 /**
  * Nasiya shartnomasining summalari.
  *

@@ -58,6 +58,18 @@ export default async function ContractPage({
         <h1>{c.customer_label}</h1>
         <p className="contractid">
           Shartnoma ID: <code>{c.id}</code>
+          {c.number ? (
+            <>
+              {" · "}
+              <a
+                href={"/erp/contracts/" + c.id + "/shartnoma?branch=" + branch}
+                target="_blank"
+                rel="noopener"
+              >
+                {c.number} - sonli shartnomani chop etish
+              </a>
+            </>
+          ) : null}
         </p>
         <aside className="notice">
           Excel va Kassa hisob-kitoblariga moslik auditdan o‘tmagan.
@@ -73,6 +85,17 @@ export default async function ContractPage({
             <dd>{dateOnly(c.start_date)}</dd>
             <dt>Muddat</dt>
             <dd>{c.months} oy</dd>
+            {c.markup === null ? null : (
+              <>
+                <dt>Ustama</dt>
+                <dd>
+                  {money(c.markup)}
+                  {Number(c.monthly_rate_bp)
+                    ? ` (oyiga ${Number(c.monthly_rate_bp) / 100}%)`
+                    : ""}
+                </dd>
+              </>
+            )}
             <dt>Holat</dt>
             <dd>{Number(c.balance) > 0 ? "Qarzi bor" : "To‘liq to‘langan"}</dd>
           </dl>

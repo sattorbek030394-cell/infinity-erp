@@ -116,8 +116,10 @@ after(async () => {
       "cash_wallets",
       "installments",
       "contracts",
+      "customers",
       "inventory",
       "memberships",
+      "nasiya_settings",
       "branches",
     ]) {
       if (table === "installments")
@@ -1473,5 +1475,153 @@ test(
       (await post("inventory", { ...input, imei: "222222222222222" })).status,
       400,
     );
+  },
+);
+
+test(
+  "HTTP: ustama hisobi, mijoz kartochkasi va chop etiladigan shartnoma",
+  { skip: !connection },
+  async () => {
+    const auth = await login(admin + "@example.invalid");
+    const device = async (imei: string) =>
+      (
+        await (
+          await post(
+            "inventory",
+            { imei, model: "SYNTHETIC nasiya phone", cost: 9_000_000 },
+            b1,
+            auth,
+          )
+        ).json()
+      ).id as string;
+    const pnfl = "5" + String(Date.now()).slice(-13);
+    const terms = {
+      inventoryId: await device("333333333333333"),
+      customerName: "SYNTHETIC Mijoz Testovich",
+      pnfl,
+      passport: "AD1234567",
+      passportIssuer: "SYNTHETIC IIB",
+      passportDate: "2021-03-12",
+      birthDate: "1994-03-04",
+      phone1: "+998 90 000 00 00",
+      phone2: "",
+      address: "SYNTHETIC manzil",
+      icloudAccount: "",
+      icloudPhone: "",
+      priceUzs: 17_028_900,
+      downPayment: 3_570_000,
+      months: 6,
+      monthlyRateBp: 500,
+      startDate: "2026-09-25",
+    };
+    const created = await post("contracts", terms, b1, auth);
+    assert.equal(created.status, 200);
+    const contract = (await created.json()).id;
+    const row = (
+      await pool.query("SELECT * FROM contracts WHERE id=$1", [contract])
+    ).rows[0];
+    // 13 458 900 * 5% * 6 oy = 4 037 670
+    assert.equal(Number(row.principal), 13_458_900);
+    assert.equal(Number(row.markup), 4_037_670);
+    assert.equal(Number(row.total), 3_570_000 + 13_458_900 + 4_037_670);
+    assert.equal(Number(row.monthly_rate_bp), 500);
+    assert.ok(Number(row.number) >= 1, "shartnomaga raqam berildi");
+    assert.ok(row.customer_id, "mijoz kartochkasi ulandi");
+    assert.equal(
+      Number(
+        (
+          await pool.query(
+            "SELECT sum(amount) jami FROM installments WHERE contract_id=$1",
+            [contract],
+          )
+        ).rows[0].jami,
+      ),
+      13_458_900 + 4_037_670,
+      "jadval asosiy qarz va ustamani to‘liq qoplaydi",
+    );
+    const customer = (
+      await pool.query("SELECT * FROM customers WHERE id=$1", [row.customer_id])
+    ).rows[0];
+    assert.equal(customer.full_name, "SYNTHETIC Mijoz Testovich");
+    assert.equal(customer.passport_issuer, "SYNTHETIC IIB");
+    assert.equal(customer.phone2, "", "bo‘sh maydon xato bermaydi");
+
+    // Hisob kelishmasa saqlanmaydi, jim tuzatilmaydi.
+    assert.equal(
+      (
+        await post(
+          "contracts",
+          {
+            ...terms,
+            inventoryId: await device("344444444444444"),
+            total: 1_000_000,
+          },
+          b1,
+          auth,
+        )
+      ).status,
+      400,
+    );
+    // PNFL bir xil bo'lsa ikkinchi shartnoma o'sha mijozga yoziladi.
+    const second = await post(
+      "contracts",
+      {
+        ...terms,
+        inventoryId: await device("355555555555555"),
+        phone2: "+998 91 111 11 11",
+        priceUzs: 9_000_000,
+        downPayment: 1_000_000,
+        months: 3,
+      },
+      b1,
+      auth,
+    );
+    assert.equal(second.status, 200);
+    const secondRow = (
+      await pool.query("SELECT * FROM contracts WHERE id=$1", [
+        (await second.json()).id,
+      ])
+    ).rows[0];
+    assert.equal(secondRow.customer_id, row.customer_id);
+    assert.equal(Number(secondRow.number), Number(row.number) + 1);
+    assert.equal(
+      (
+        await pool.query("SELECT phone2 FROM customers WHERE id=$1", [
+          row.customer_id,
+        ])
+      ).rows[0].phone2,
+      "+998 91 111 11 11",
+      "yangi ma'lumot qo‘shiladi",
+    );
+
+    const print = (id: string, auth?: string) =>
+      fetch(origin + "/erp/contracts/" + id + "/shartnoma?branch=" + b1, {
+        headers: auth ? { cookie: auth } : {},
+      });
+    const printed = await print(contract, auth);
+    assert.equal(printed.status, 200);
+    const html = await printed.text();
+    for (const kerak of [
+      row.number + " - сонли",
+      "SYNTHETIC Mijoz Testovich",
+      pnfl,
+      "333333333333333",
+      "12.03.2021",
+      "1-илова",
+    ])
+      assert.ok(html.includes(kerak), "shartnomada yo‘q: " + kerak);
+    assert.doesNotMatch(html, /\{\{|undefined|NaN/);
+    assert.equal(
+      (await print(contract, await login(viewer + "@example.invalid"))).status,
+      200,
+      "viewer shartnomani ko‘ra oladi",
+    );
+    assert.equal(
+      (await print(contract, await login(outsider + "@example.invalid")))
+        .status,
+      403,
+    );
+    assert.equal((await print(contract)).status, 403);
+    assert.equal((await print(randomUUID(), auth)).status, 404);
   },
 );

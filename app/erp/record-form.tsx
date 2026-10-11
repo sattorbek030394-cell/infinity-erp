@@ -1,6 +1,8 @@
 "use client";
 import { useRef, useState } from "react";
 import { useRouter } from "next/navigation";
+import { nasiyaTotals } from "../../lib/domain";
+import { money } from "../../lib/filters";
 export function RecordForm({
   branchId,
   kind,
@@ -15,6 +17,27 @@ export function RecordForm({
   const router = useRouter();
   const [message, setMessage] = useState("");
   const [busy, setBusy] = useState(false);
+  // Sotuvchi raqamni kiritayotganda ustama va oylik to'lov darhol ko'rinadi:
+  // mijozga aytiladigan summa shu, qo'lda hisoblash kerak emas.
+  const [hisob, setHisob] = useState<ReturnType<typeof nasiyaTotals> | null>(
+    null,
+  );
+  function hisobla(form: HTMLFormElement) {
+    if (kind !== "contracts") return;
+    const d = Object.fromEntries(new FormData(form)) as Record<string, string>;
+    try {
+      setHisob(
+        nasiyaTotals(
+          Number(d.priceUzs),
+          Number(d.downPayment || 0),
+          Number(d.months),
+          Math.round(Number(d.rateFoiz || 0) * 100),
+        ),
+      );
+    } catch {
+      setHisob(null);
+    }
+  }
   const key = useRef<string | null>(null);
   const lastPayload = useRef<string | null>(null);
   async function submit(e: React.FormEvent<HTMLFormElement>) {
@@ -22,7 +45,15 @@ export function RecordForm({
     if (busy) return;
     setBusy(true);
     const form = e.currentTarget;
-    const data = Object.fromEntries(new FormData(form));
+    const data = Object.fromEntries(new FormData(form)) as Record<
+      string,
+      string
+    >;
+    // Ekranda foiz, bazada bazis punkt: 5% -> 500.
+    if (kind === "contracts") {
+      data.monthlyRateBp = String(Math.round(Number(data.rateFoiz || 0) * 100));
+      delete data.rateFoiz;
+    }
     const payload = JSON.stringify(data);
     if (lastPayload.current !== payload) {
       key.current = crypto.randomUUID();
@@ -39,6 +70,7 @@ export function RecordForm({
       if (!response.ok) throw new Error(result.error);
       setMessage("Saqlandi");
       form.reset();
+      setHisob(null);
       key.current = null;
       lastPayload.current = null;
       router.refresh();
@@ -54,13 +86,14 @@ export function RecordForm({
     type = "text",
     min?: number,
     max?: number,
+    required = true,
   ) => (
     <label key={name}>
       {label}
       <input
         name={name}
         type={type}
-        required
+        required={required}
         min={min}
         max={max}
         step={type === "number" ? 1 : undefined}
@@ -68,8 +101,14 @@ export function RecordForm({
       />
     </label>
   );
+  const ixtiyoriy = (name: string, label: string, type = "text") =>
+    field(name, label, type, undefined, undefined, false);
   return (
-    <form className="entry" onSubmit={submit}>
+    <form
+      className="entry"
+      onSubmit={submit}
+      onInput={(e) => hisobla(e.currentTarget)}
+    >
       {kind === "inventory" ? (
         <>
           {field("model", "Model")}
@@ -90,8 +129,18 @@ export function RecordForm({
               ))}
             </select>
           </label>
-          {field("customerLabel", "Mijoz belgisi (maxfiy hujjatsiz)")}
-          {field("total", "Kelishilgan jami UZS", "number", 1)}
+          {field("customerName", "Mijoz F.I.Sh.")}
+          {ixtiyoriy("pnfl", "PNFL (JShShIR)")}
+          {ixtiyoriy("passport", "Pasport seriyasi")}
+          {ixtiyoriy("passportIssuer", "Pasportni kim berdi")}
+          {ixtiyoriy("passportDate", "Pasport sanasi", "date")}
+          {ixtiyoriy("birthDate", "Tug‘ilgan sana", "date")}
+          {ixtiyoriy("phone1", "Telefon 1")}
+          {ixtiyoriy("phone2", "Telefon 2")}
+          {ixtiyoriy("address", "Manzil")}
+          {ixtiyoriy("icloudAccount", "iCloud akkaunt")}
+          {ixtiyoriy("icloudPhone", "iCloud raqami")}
+          {field("priceUzs", "Qurilma narxi UZS", "number", 1)}
           {field("downPayment", "Boshlang‘ich UZS", "number", 0)}
           <label>
             Boshlang‘ich to‘lov hamyoni
@@ -102,7 +151,27 @@ export function RecordForm({
             </select>
           </label>
           {field("months", "Oylar", "number", 1, 36)}
+          <label>
+            Oylik ustama %
+            <input
+              name="rateFoiz"
+              type="number"
+              required
+              min={0}
+              max={100}
+              step={0.1}
+              defaultValue={5}
+            />
+          </label>
           {field("startDate", "Boshlanish sanasi", "date")}
+          {hisob ? (
+            <p className="hisob">
+              Asosiy qarz <strong>{money(hisob.principal)}</strong> · Ustama{" "}
+              <strong>{money(hisob.markup)}</strong> · Jami{" "}
+              <strong>{money(hisob.total)}</strong> · Oylik to‘lov{" "}
+              <strong>{money(hisob.monthly)}</strong>
+            </p>
+          ) : null}
         </>
       ) : null}
       {kind === "payments" ? (

@@ -1,6 +1,72 @@
 import { scope } from "./auth";
 import { db } from "./db";
 import type { HistoryFilters } from "./filters";
+import type { ShartnomaMalumot } from "./shartnoma";
+
+/**
+ * Chop etiladigan shartnoma uchun ma'lumot.
+ *
+ * `raqam` nol bo'lsa - yozuvga shartnoma raqami berilmagan (ustama hisobi
+ * qo'shilishidan oldin tuzilgan eski yozuv). Chaqiruvchi shuni tekshirsin:
+ * raqamsiz shartnomani chop etib bo'lmaydi.
+ */
+export async function readShartnoma(
+  branchId: string,
+  contractId: string,
+): Promise<ShartnomaMalumot | null> {
+  const s = await scope(branchId);
+  const r = await db.query(
+    `SELECT c.number,c.start_date,c.total,c.down_payment,c.principal,c.markup,c.customer_label,
+ i.model,i.imei,i.memory,i.color,
+ m.full_name,m.pnfl,m.passport,m.passport_issuer,m.passport_date,m.address,m.phone1,m.phone2
+ FROM contracts c JOIN inventory i ON i.id=c.inventory_id AND i.tenant_id=c.tenant_id AND i.branch_id=c.branch_id
+ LEFT JOIN customers m ON m.id=c.customer_id AND m.tenant_id=c.tenant_id
+ WHERE c.tenant_id=$1 AND c.branch_id=$2 AND c.id=$3`,
+    [s.tenant_id, s.branch_id, contractId],
+  );
+  if (!r.rowCount) return null;
+  const c = r.rows[0];
+  const installments = (
+    await db.query(
+      "SELECT due_date,amount FROM installments WHERE contract_id=$1 ORDER BY sequence",
+      [contractId],
+    )
+  ).rows;
+  const boshlangich = Number(c.down_payment);
+  const qoldiq = Number(c.total) - boshlangich;
+  // Pasport sanasi hujjatda kun.oy.yil ko'rinishida yoziladi.
+  const kun = (v: Date) =>
+    [
+      String(v.getDate()).padStart(2, "0"),
+      String(v.getMonth() + 1).padStart(2, "0"),
+      v.getFullYear(),
+    ].join(".");
+  return {
+    raqam: Number(c.number ?? 0),
+    sana: new Date(c.start_date),
+    mijoz: c.full_name ?? c.customer_label,
+    pnfl: c.pnfl ?? "",
+    pasport: c.passport ?? "",
+    pasportKim: c.passport_issuer ?? "",
+    pasportQachon: c.passport_date ? kun(new Date(c.passport_date)) : "",
+    manzil: c.address ?? "",
+    telefon1: c.phone1 ?? "",
+    telefon2: c.phone2 ?? "",
+    tovar: [c.model, c.memory, c.color].filter(Boolean).join(" "),
+    imei: c.imei,
+    // Qurilma narxi: ustamasiz summa. Eski yozuvda ustama ajratilmagan,
+    // u holda principal = total - boshlang'ich.
+    narx: Number(c.principal ?? qoldiq) + boshlangich,
+    boshlangich,
+    qoldiq,
+    oylik: Number(installments[0]?.amount ?? 0),
+    jadval: installments.map((p) => ({
+      sana: new Date(p.due_date),
+      summa: Number(p.amount),
+    })),
+  };
+}
+
 export async function readContract(branchId: string, contractId: string) {
   const s = await scope(branchId);
   const result = await db.query(
