@@ -3121,3 +3121,113 @@ test(
     assert.ok(html.includes("Sanoqda xato bo‘ldi"), "qayta ochish sababi tarixda");
   },
 );
+
+test(
+  "HTTP: oylik foyda hisoboti (TZ 6.9)",
+  { skip: !connection },
+  async () => {
+    const auth = await login(admin + "@example.invalid");
+    const oy = (
+      await pool.query(
+        "SELECT to_char((now() AT TIME ZONE 'Asia/Tashkent')::date,'YYYY-MM') oy",
+      )
+    ).rows[0].oy;
+    const bugun = (
+      await pool.query(
+        "SELECT (now() AT TIME ZONE 'Asia/Tashkent')::date::text d",
+      )
+    ).rows[0].d;
+    // Tannarxi 8 mln qurilma, narxi 10 mln: marja 2 mln.
+    const item = (
+      await (
+        await post(
+          "inventory",
+          { imei: "711111111111111", model: "SYNTHETIC FOYDA", cost: 8_000_000 },
+          b3,
+          outsiderCookie,
+        )
+      ).json()
+    ).id;
+    // Boshqa tenant (b3) - o'z filialida hisoblansin.
+    const contract = (
+      await (
+        await post(
+          "contracts",
+          {
+            inventoryId: item,
+            customerName: "SYNTHETIC FOYDA mijoz",
+            priceUzs: 10_000_000,
+            downPayment: 2_000_000,
+            months: 4,
+            monthlyRateBp: 500,
+            startDate: bugun,
+          },
+          b3,
+          outsiderCookie,
+        )
+      ).json()
+    ).id;
+    // Ustama: 8 mln * 5% * 4 = 1.6 mln. To'lov 2 400 000 dan ustama ulushi:
+    // 2 400 000 * 1 600 000 / 9 600 000 = 400 000.
+    assert.equal(
+      (
+        await post(
+          "payments",
+          {
+            contractId: contract,
+            amount: 2_400_000,
+            method: "cash",
+            requestKey: randomUUID(),
+          },
+          b3,
+          outsiderCookie,
+        )
+      ).status,
+      200,
+    );
+    // Xarajat: 500 000 so'm ijara.
+    assert.equal(
+      (
+        await fetch(origin + "/api/cash", {
+          method: "POST",
+          headers: {
+            cookie: outsiderCookie,
+            origin,
+            "content-type": "application/json",
+          },
+          body: JSON.stringify({
+            branchId: b3,
+            requestKey: randomUUID(),
+            action: "entry",
+            wallet: "cash_uzs",
+            date: bugun,
+            amount: "500000",
+            direction: "out",
+            category: "Ijara",
+          }),
+        })
+      ).status,
+      200,
+    );
+    const html = await (
+      await fetch(origin + "/erp?branch=" + b3 + "&tab=profit&oy=" + oy, {
+        headers: { cookie: outsiderCookie },
+      })
+    ).text();
+    // Marja 2 mln, nasiya daromadi 400 ming, xarajat 500 ming,
+    // sof foyda 1 900 000.
+    for (const kutilgan of ["2 000 000", "400 000", "500 000", "1 900 000"])
+      assert.ok(
+        html.includes(kutilgan),
+        "foyda hisobotida topilmadi: " + kutilgan,
+      );
+    assert.ok(html.includes("Sof foyda"));
+    assert.ok(html.includes("boshqaruv hisobi"));
+    // Noto'g'ri oy so'ralsa hozirgi oy ko'rsatiladi, xato bermaydi.
+    const yomon = await fetch(
+      origin + "/erp?branch=" + b3 + "&tab=profit&oy=notdate",
+      { headers: { cookie: outsiderCookie } },
+    );
+    assert.equal(yomon.status, 200);
+  },
+);
