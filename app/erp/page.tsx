@@ -423,6 +423,7 @@ export default async function ERP({
               <RecordForm
                 branchId={branch}
                 kind="contracts"
+                tradeIns={data.tradeIns}
                 items={data.items
                   .filter((i) => i.status === "available")
                   .map((i) => ({ id: i.id, label: i.model + " / " + i.imei }))}

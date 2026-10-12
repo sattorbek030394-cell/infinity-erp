@@ -3919,3 +3919,125 @@ test(
     assert.ok(yopiq.includes("huquqi yo‘q"));
   },
 );
+
+test(
+  "HTTP: trade-in boshlang‘ich to‘lovning bir qismi (taklif 3.10)",
+  { skip: !connection },
+  async () => {
+    const auth = await login(admin + "@example.invalid");
+    const hamyon = async (w: string) =>
+      Number(
+        (
+          await pool.query(
+            "SELECT coalesce(sum(amount_minor),0) q FROM cash_entries WHERE branch_id=$1 AND wallet=$2",
+            [b1, w],
+          )
+        ).rows[0].q,
+      );
+    const oldin = await hamyon("cash_uzs");
+    // Mijozning eski telefoni: 1 000 000 ga baholandi, kassadan pul
+    // chiqmaydi va yetkazib beruvchi qarzi ham tug'ilmaydi.
+    const eski = (
+      await (
+        await post(
+          "inventory",
+          {
+            imei: "755555555555551",
+            model: "SYNTHETIC TRADEIN eski",
+            cost: 1_000_000,
+            purchaseMethod: "trade_in",
+          },
+          b1,
+          auth,
+        )
+      ).json()
+    ).id;
+    assert.equal(await hamyon("cash_uzs"), oldin, "trade-in kassaga tegmaydi");
+    const yangi = (
+      await (
+        await post(
+          "inventory",
+          {
+            imei: "755555555555552",
+            model: "SYNTHETIC TRADEIN yangi",
+            cost: 8_000_000,
+          },
+          b1,
+          auth,
+        )
+      ).json()
+    ).id;
+    const shartnoma = (data: Record<string, unknown>) =>
+      post(
+        "contracts",
+        {
+          customerName: "SYNTHETIC TRADEIN mijoz",
+          priceUzs: 12_000_000,
+          downPayment: 3_600_000,
+          months: 6,
+          monthlyRateBp: 500,
+          startDate: "2026-10-01",
+          ...data,
+        },
+        b1,
+        auth,
+      );
+    // Trade-in bahosi boshlang'ichdan oshsa qabul qilinmaydi.
+    assert.equal(
+      (
+        await shartnoma({
+          inventoryId: yangi,
+          downPayment: 500_000,
+          tradeInId: eski,
+        })
+      ).status,
+      400,
+    );
+    // Sotilayotgan qurilmaning o'zi trade-in bo'lolmaydi.
+    assert.equal(
+      (await shartnoma({ inventoryId: eski, tradeInId: eski })).status,
+      400,
+    );
+    const javob = await shartnoma({ inventoryId: yangi, tradeInId: eski });
+    assert.equal(javob.status, 200);
+    const contract = (await javob.json()).id;
+    // Kassaga faqat pul qismi tushadi: 3 600 000 − 1 000 000.
+    assert.equal(await hamyon("cash_uzs"), oldin + 2_600_000);
+    const row = (
+      await pool.query(
+        "SELECT trade_in_id,down_payment FROM contracts WHERE id=$1",
+        [contract],
+      )
+    ).rows[0];
+    assert.equal(row.trade_in_id, eski);
+    assert.equal(Number(row.down_payment), 3_600_000, "shartnomada to‘liq");
+    // Eski telefon omborda tannarxi bilan qoladi - keyin sotiladi.
+    assert.equal(
+      (
+        await pool.query("SELECT status,cost FROM inventory WHERE id=$1", [
+          eski,
+        ])
+      ).rows[0].status,
+      "available",
+    );
+    // Bitta trade-in ikki shartnomaga bog'lanmaydi.
+    const ikkinchi = (
+      await (
+        await post(
+          "inventory",
+          {
+            imei: "755555555555553",
+            model: "SYNTHETIC TRADEIN yangi 2",
+            cost: 8_000_000,
+          },
+          b1,
+          auth,
+        )
+      ).json()
+    ).id;
+    assert.equal(
+      (await shartnoma({ inventoryId: ikkinchi, tradeInId: eski })).status,
+      400,
+    );
+  },
+);
