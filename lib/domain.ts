@@ -57,12 +57,27 @@ export const itemSchema = z
     supplier: matn(120),
     receivedBy: matn(80),
     purchaseMethod: ixtiyoriy(z.enum(TOLOV_TURLARI)),
+    // "Investor tovari" bo'lsa qaysi investorning kapitali ekani.
+    investorId: ixtiyoriy(z.uuid()),
   })
   .refine(
     (v) =>
       v.cost !== undefined ||
       (v.costUsd !== undefined && v.costRate !== undefined),
     { message: "Tannarxni so‘mda yoki dollar va kurs bilan yozing" },
+  )
+  // Investor kapitali dollarda yuritiladi, shuning uchun investor
+  // tovarida investor ham, dollardagi tannarx ham majburiy.
+  .refine(
+    (v) =>
+      (v.purchaseMethod === "investor") === (v.investorId !== undefined),
+    { message: "Investor tovarida investorni tanlang" },
+  )
+  .refine(
+    (v) =>
+      v.purchaseMethod !== "investor" ||
+      (v.costUsd !== undefined && v.costRate !== undefined),
+    { message: "Investor tovarida tannarx dollarda bo‘lishi kerak" },
   );
 /**
  * Mijoz kartochkasi - nasiya va qarzga sotishda bir xil to'ldiriladi.

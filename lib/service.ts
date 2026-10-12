@@ -247,8 +247,8 @@ async function writeRecord(
     await c.query(
       `INSERT INTO inventory(id,tenant_id,branch_id,imei,imei2,brand,model,memory,sim_type,
  color,region,condition,battery,purchase_date,cost,cost_usd_cents,cost_rate,
- expected_price,supplier_id,received_by,purchase_method)
- VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17,$18,$19,$20,$21)`,
+ expected_price,supplier_id,received_by,purchase_method,investor_id)
+ VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17,$18,$19,$20,$21,$22)`,
       [
         id,
         s.tenant_id,
@@ -271,6 +271,7 @@ async function writeRecord(
         supplierId,
         v.receivedBy,
         v.purchaseMethod ?? "",
+        v.investorId ?? null,
       ],
     );
     // TZ INV-02: to'lov turiga qarab kassadan chiqim yoki yetkazib
@@ -311,6 +312,34 @@ async function writeRecord(
         id,
         hamyon === "cash_usd" ? usdCents! : cost,
         hamyon,
+      );
+    } else if (v.purchaseMethod === "investor") {
+      // Investor tovari: kassada harakat yo'q, yetkazib beruvchi qarzi
+      // ham yo'q - tovarning tannarxi investorning kapitaliga yoziladi.
+      // Sana omborga kirgan kun: kapital-kun shu kundan boshlanadi.
+      const inv = await c.query(
+        "SELECT closed_at FROM investors WHERE id=$1 AND tenant_id=$2 AND branch_id=$3 FOR UPDATE",
+        [v.investorId, s.tenant_id, s.branch_id],
+      );
+      if (!inv.rowCount) throw new Error("Investor topilmadi");
+      if (inv.rows[0].closed_at)
+        throw new Error("Chiqib ketgan investorga kirim yozilmaydi");
+      await c.query(
+        `INSERT INTO investor_entries(id,tenant_id,branch_id,investor_id,inventory_id,day,
+ kind,form,cents,note,created_by)
+ VALUES($1,$2,$3,$4,$5,COALESCE($6::date,(now() AT TIME ZONE 'Asia/Tashkent')::date),
+ 'capital','goods',$7,$8,$9)`,
+        [
+          randomUUID(),
+          s.tenant_id,
+          s.branch_id,
+          v.investorId,
+          id,
+          v.purchaseDate ?? null,
+          usdCents,
+          v.model + " / " + v.imei,
+          s.userId,
+        ],
       );
     }
   } else if (kind === "contracts") {

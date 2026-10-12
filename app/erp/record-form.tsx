@@ -9,12 +9,14 @@ export function RecordForm({
   items,
   selectedId,
   kurs = "",
+  investors = [],
 }: {
   branchId: string;
   kind: string;
   items: { id: string; label: string }[];
   selectedId?: string;
   kurs?: string;
+  investors?: { id: string; name: string }[];
 }) {
   const router = useRouter();
   const [message, setMessage] = useState("");
@@ -28,6 +30,9 @@ export function RecordForm({
   // dastur hisoblaydi (PAY-02).
   const [usul, setUsul] = useState("cash");
   const [som, setSom] = useState(0);
+  // Kirimda xarid turi: "investor tovari" tanlansa qaysi investor
+  // ekanini ham so'raymiz.
+  const [xarid, setXarid] = useState("");
   // Qarzga sotishda sotuvchi raqam kiritayotganda qolgan qarz darhol
   // ko'rinadi - mijozga aytiladigan summa shu.
   const [qarz, setQarz] = useState<{
@@ -43,6 +48,7 @@ export function RecordForm({
       const usd = Number(kind === "payments" ? d.usdAmount : d.costUsd),
         kurs = Number(kind === "payments" ? d.rate : d.costRate);
       setSom(usd > 0 && kurs > 0 ? Math.round(usd * kurs) : 0);
+      if (kind === "inventory") setXarid(d.purchaseMethod ?? "");
       return;
     }
     if (kind === "qarz") {
@@ -220,6 +226,19 @@ export function RecordForm({
               <option value="investor">Investor tovari</option>
             </select>
           </label>
+          {xarid === "investor" ? (
+            <label>
+              Kimning tovari
+              <select name="investorId" required>
+                <option value="">Tanlang</option>
+                {investors.map((i) => (
+                  <option key={i.id} value={i.id}>
+                    {i.name}
+                  </option>
+                ))}
+              </select>
+            </label>
+          ) : null}
           {som ? (
             <p className="hisob">
               Tannarx so‘mda: <strong>{money(som)}</strong>

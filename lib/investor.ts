@@ -367,3 +367,21 @@ export async function readInvestors(branchId: string, oyRaw?: string) {
     })),
   };
 }
+
+/**
+ * Kirim formasidagi tanlov uchun qisqa ro'yxat - faqat ismlar.
+ *
+ * Summalarni qaytarmaydi, shuning uchun omborchi ham investor tovarini
+ * yozib qo'ya oladi: kimning tovari ekanini bilish uchun kapital
+ * raqamlarini ko'rish shart emas.
+ */
+export async function investorRoyxati(branchId: string) {
+  const s = await scope(branchId);
+  return (
+    await db.query(
+      `SELECT id,name FROM investors
+ WHERE tenant_id=$1 AND branch_id=$2 AND closed_at IS NULL ORDER BY name`,
+      [s.tenant_id, s.branch_id],
+    )
+  ).rows as { id: string; name: string }[];
+}

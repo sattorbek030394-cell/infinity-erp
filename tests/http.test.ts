@@ -117,7 +117,6 @@ after(async () => {
       "investor_shares",
       "investor_months",
       "investor_entries",
-      "investors",
       "cash_entries",
       "monthly_targets",
       "cash_closing_lines",
@@ -135,6 +134,7 @@ after(async () => {
       "contracts",
       "customers",
       "inventory",
+      "investors",
       "suppliers",
       "exchange_rates",
       "memberships",
@@ -2909,15 +2909,69 @@ test(
       400,
     );
 
-    // 3. Investor tovari: na chiqim, na qarz.
+    // 3. Investor tovari: na chiqim, na qarz - lekin kapital daftariga
+    // tannarx bo'yicha kirim yoziladi.
+    const investorId = (
+      await (
+        await fetch(origin + "/api/investors", {
+          method: "POST",
+          headers: { cookie: auth, origin, "content-type": "application/json" },
+          body: JSON.stringify({
+            branchId: b1,
+            action: "investor",
+            name: "SYNTHETIC INV TOVAR",
+          }),
+        })
+      ).json()
+    ).id as string;
+    // Investorni tanlamasa qabul qilinmaydi.
+    assert.equal(
+      (
+        await kirim({
+          imei: "644444444444441",
+          costUsd: "583.33",
+          costRate: 12_000,
+          purchaseMethod: "investor",
+        })
+      ).status,
+      400,
+    );
+    // So'mdagi tannarx ham yetmaydi: kapital dollarda yuritiladi.
+    assert.equal(
+      (
+        await kirim({
+          imei: "644444444444442",
+          cost: 7_000_000,
+          purchaseMethod: "investor",
+          investorId,
+        })
+      ).status,
+      400,
+    );
     const investor = await kirim({
       imei: "644444444444444",
-      cost: 7_000_000,
+      costUsd: "583.33",
+      costRate: 12_000,
+      purchaseDate: "2026-09-20",
       supplier: "SYNTHETIC Olim aka",
       purchaseMethod: "investor",
+      investorId,
     });
     assert.equal(investor.status, 200);
     assert.equal(await hamyon("cash_uzs"), uzsBefore);
+    const kapital = (
+      await pool.query(
+        `SELECT e.day::text,e.kind,e.form,e.cents,e.inventory_id
+ FROM investor_entries e WHERE e.investor_id=$1`,
+        [investorId],
+      )
+    ).rows;
+    assert.equal(kapital.length, 1, "kirim bitta kapital yozuvi yaratadi");
+    assert.equal(kapital[0].day, "2026-09-20", "omborga kirgan kun bilan");
+    assert.equal(kapital[0].kind, "capital");
+    assert.equal(kapital[0].form, "goods");
+    assert.equal(Number(kapital[0].cents), 58_333, "tannarx dollarda");
+    assert.equal(kapital[0].inventory_id, (await investor.json()).id);
 
     // 4. Qarz to'lovi: majburiyat kamayadi, kassadan pul chiqadi.
     const pay = (body: Record<string, unknown>) =>
@@ -3671,23 +3725,23 @@ test(
       kind = "capital",
       form = "cash",
     ) => inv({ action: "entry", investorId, day, amount, kind, form });
-    // A: 1000 $ 1-sentabrdan. B: 1000 $ 16-sentabrdan (15 kun ishlaydi).
-    assert.equal((await kirim(a, "2026-09-01", "1000")).status, 200);
-    assert.equal((await kirim(b, "2026-09-16", "1000")).status, 200);
+    // A: 1000 $ 1-iyundan. B: 1000 $ 16-iyundan (15 kun ishlaydi).
+    assert.equal((await kirim(a, "2026-06-01", "1000")).status, 200);
+    assert.equal((await kirim(b, "2026-06-16", "1000")).status, 200);
     // Qoldiqdan ortiq chiqarib bo'lmaydi.
     assert.equal(
-      (await kirim(b, "2026-09-20", "5000", "return")).status,
+      (await kirim(b, "2026-06-20", "5000", "return")).status,
       400,
     );
 
-    // Sentabrni kunlik o'rtacha kapital bilan yopamiz: 300 $ taqsimlanadi.
+    // Iyunni kunlik o'rtacha kapital bilan yopamiz: 300 $ taqsimlanadi.
     // A ning kapital-kunlari 30 kun x 1000 $, B ning 15 kun x 1000 $ -
     // nisbat 2:1, demak 200 $ va 100 $.
     assert.equal(
       (
         await inv({
           action: "close",
-          month: "2026-09",
+          month: "2026-06",
           rule: "daily",
           profit: "300",
           rate: 12_000,
@@ -3699,7 +3753,7 @@ test(
       await pool.query(
         `SELECT i.name,s.capital_days,s.cents FROM investor_shares s
  JOIN investors i ON i.id=s.investor_id
- WHERE s.branch_id=$1 AND s.month='2026-09-01' ORDER BY i.name`,
+ WHERE s.branch_id=$1 AND s.month='2026-06-01' ORDER BY i.name`,
         [b1],
       )
     ).rows.map((r) => [r.name, Number(r.capital_days), Number(r.cents)]);
@@ -3717,15 +3771,15 @@ test(
       )
     ).rows.map((r) => [r.name, r.day, r.kind, Number(r.cents)]);
     assert.deepEqual(hisoblangan, [
-      ["SYNTHETIC INV A", "2026-10-01", "profit", 20_000],
-      ["SYNTHETIC INV B", "2026-10-01", "profit", 10_000],
+      ["SYNTHETIC INV A", "2026-07-01", "profit", 20_000],
+      ["SYNTHETIC INV B", "2026-07-01", "profit", 10_000],
     ]);
     // Bir oy ikki marta yopilmaydi.
     assert.equal(
       (
         await inv({
           action: "close",
-          month: "2026-09",
+          month: "2026-06",
           rule: "daily",
           profit: "300",
           rate: 12_000,
@@ -3755,17 +3809,17 @@ test(
       (
         await inv({
           action: "close",
-          month: "2026-08",
+          month: "2026-05",
           rule: "daily",
           profit: "-60",
           rate: 12_000,
         })
       ).status,
       400,
-      "avgustda ishlagan kapital yo‘q edi",
+      "mayda ishlagan kapital yo‘q edi",
     );
     const html = await (
-      await fetch(origin + "/erp?branch=" + b1 + "&tab=investors&oy=2026-09", {
+      await fetch(origin + "/erp?branch=" + b1 + "&tab=investors&oy=2026-06", {
         headers: { cookie: auth },
       })
     ).text();

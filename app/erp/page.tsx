@@ -29,7 +29,7 @@ import { ClosuresPanel } from "./closures-panel";
 import { readSuppliers } from "../../lib/supplier";
 import { SuppliersPanel } from "./suppliers-panel";
 import { readProfit } from "../../lib/profit";
-import { readInvestors } from "../../lib/investor";
+import { readInvestors, investorRoyxati } from "../../lib/investor";
 import { InvestorPanel } from "./investor-panel";
 import { ProfitPanel } from "./profit-panel";
 import { cashMoney } from "../../lib/cash-domain";
@@ -117,6 +117,9 @@ export default async function ERP({
           typeof query.oy === "string" ? query.oy : "",
         )
       : null;
+  // Kirim formasidagi "investor tovari" tanlovi uchun ismlar ro'yxati.
+  const investorNomlari =
+    tab === "inventory" ? await investorRoyxati(branch) : [];
   const items = data.items.filter(
     (i) =>
       matchesSearch(
@@ -322,6 +325,7 @@ export default async function ERP({
                 kind="inventory"
                 items={[]}
                 kurs={data.kurs}
+                investors={investorNomlari}
               />
             )}
             <SearchForm
