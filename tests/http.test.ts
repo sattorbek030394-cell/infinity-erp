@@ -3351,6 +3351,38 @@ test(
       "bekor qilingan ustama alohida ko'rsatilsin",
     );
 
+    // Tafsilot: har raqamning ichi ochiladi va yig'indisi hisobotdagi
+    // songa teng chiqadi.
+    const tafsil = async (kind: string) =>
+      (
+        await fetch(
+          origin +
+            "/erp?branch=" +
+            b3 +
+            "&tab=profit&oy=" +
+            oy +
+            "&tafsil=" +
+            kind,
+          { headers: { cookie: outsiderCookie } },
+        )
+      ).text();
+    const marjaIchi = await tafsil("marja");
+    assert.ok(marjaIchi.includes("Sotuv marjasi —"));
+    assert.ok(marjaIchi.includes("SYNTHETIC FOYDA"), "sotuv qatori ko'rinsin");
+    for (const n of ["10 000 000", "8 000 000", "2 000 000"])
+      assert.ok(marjaIchi.includes(n), "marja tafsilotida yo'q: " + n);
+    // Ustama: to'lovlardan 400 000 + 1 000 000, erta yopish tuzatishi
+    // −1 000 000. Yig'indi 400 000 - hisobotdagi son bilan bir xil.
+    const ustamaIchi = await tafsil("ustama");
+    assert.ok(ustamaIchi.includes("erta yopish"), "yopish tuzatishi ko'rinsin");
+    assert.ok(ustamaIchi.includes("400 000"));
+    const xarajatIchi = await tafsil("xarajat");
+    assert.ok(
+      xarajatIchi.includes("Ijara") && xarajatIchi.includes("500 000"),
+    );
+    // Noto'g'ri tur so'ralsa marja ko'rsatiladi, xato bermaydi.
+    assert.ok((await tafsil("yoq")).includes("Sotuv marjasi —"));
+
     // Noto'g'ri oy so'ralsa hozirgi oy ko'rsatiladi, xato bermaydi.
     const yomon = await fetch(
       origin + "/erp?branch=" + b3 + "&tab=profit&oy=notdate",
