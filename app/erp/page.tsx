@@ -29,6 +29,8 @@ import { ClosuresPanel } from "./closures-panel";
 import { readSuppliers } from "../../lib/supplier";
 import { SuppliersPanel } from "./suppliers-panel";
 import { readProfit } from "../../lib/profit";
+import { readInvestors } from "../../lib/investor";
+import { InvestorPanel } from "./investor-panel";
 import { ProfitPanel } from "./profit-panel";
 import { cashMoney } from "../../lib/cash-domain";
 export const dynamic = "force-dynamic";
@@ -82,6 +84,7 @@ export default async function ERP({
       "sales",
       "suppliers",
       "profit",
+      "investors",
     ].includes(query.tab)
       ? query.tab
       : "dashboard";
@@ -102,6 +105,14 @@ export default async function ERP({
   const profit =
     tab === "profit"
       ? await readProfit(
+          branch,
+          typeof query.oy === "string" ? query.oy : "",
+        )
+      : null;
+  // Investor kapitali: ko'rish huquqi bo'lmasa bo'lim ochilmaydi.
+  const investors =
+    tab === "investors" && can(data.role, "investor.read")
+      ? await readInvestors(
           branch,
           typeof query.oy === "string" ? query.oy : "",
         )
@@ -181,6 +192,7 @@ export default async function ERP({
             ["sales", "Naqd savdo"],
             ["suppliers", "Ta‘minotchilar"],
             ["profit", "Foyda"],
+            ["investors", "Investorlar"],
           ].map(([key, label]) => (
             <a
               className={tab === key ? "active" : ""}
@@ -506,6 +518,15 @@ export default async function ERP({
             <h1>Tasdiq kutayotgan tushumlar</h1>
             <ApprovalsPanel branchId={branch} pending={pending} />
           </>
+        ) : null}
+        {tab === "investors" ? (
+          investors ? (
+            <InvestorPanel branchId={branch} data={investors} />
+          ) : (
+            <p className="notice">
+              Investor hisobini ko‘rish huquqi yo‘q.
+            </p>
+          )
         ) : null}
         {tab === "profit" && profit ? (
           <ProfitPanel report={profit} branch={branch} />

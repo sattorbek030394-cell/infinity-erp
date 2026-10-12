@@ -274,7 +274,10 @@ export type Amal =
   // iCloud/MDM nazorati: bloklash va ochish
   | "device.control"
   // Oylik rejani belgilash
-  | "target.write";
+  | "target.write"
+  // Investor kapitali: ko'rish va yozish. Yozish - egasining o'z ishi.
+  | "investor.read"
+  | "investor.write";
 
 // Kichik do'kon haqiqati: kassir ayni paytda sotuvchi va omborchi ham.
 // Omborchi/sotuvchi rollari ajratilganda ularning huquqi shu jadvalda
@@ -298,6 +301,8 @@ const HUQUQLAR: Record<Rol, Amal[]> = {
     "customer.block",
     "device.control",
     "target.write",
+    "investor.read",
+    "investor.write",
   ],
   manager: [
     "read",
@@ -316,6 +321,7 @@ const HUQUQLAR: Record<Rol, Amal[]> = {
     "customer.block",
     "device.control",
     "target.write",
+    "investor.read",
   ],
   cashier: [
     "read",
@@ -330,7 +336,7 @@ const HUQUQLAR: Record<Rol, Amal[]> = {
   seller: ["read", "contract.create", "sale.create"],
   warehouse: ["read", "inventory.create"],
   collector: ["read", "payment.create"],
-  accountant: ["read", "export"],
+  accountant: ["read", "export", "investor.read"],
   viewer: ["read", "export"],
 };
 

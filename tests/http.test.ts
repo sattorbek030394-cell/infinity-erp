@@ -114,6 +114,10 @@ after(async () => {
     // Tartib muhim: bola jadval ota jadvaldan oldin o'chadi.
     for (const table of [
       "audit_events",
+      "investor_shares",
+      "investor_months",
+      "investor_entries",
+      "investors",
       "cash_entries",
       "monthly_targets",
       "cash_closing_lines",
@@ -3631,5 +3635,148 @@ test(
       "foyda hisobotida qarzga sotish alohida ko‘rinsin",
     );
     assert.ok(html.includes("Qarzga sotish qoldig‘i"));
+  },
+);
+
+test(
+  "HTTP: investor kapitali va oylik taqsimot (TZ 6.10)",
+  { skip: !connection },
+  async () => {
+    const auth = await login(admin + "@example.invalid");
+    const kassirAuth = await login(kassir + "@example.invalid");
+    const inv = (body: Record<string, unknown>, cookie = auth) =>
+      fetch(origin + "/api/investors", {
+        method: "POST",
+        headers: { cookie, origin, "content-type": "application/json" },
+        body: JSON.stringify({ branchId: b1, ...body }),
+      });
+    // Kassirda investor hisobiga yozish huquqi yo'q.
+    assert.equal(
+      (
+        await inv(
+          { action: "investor", name: "SYNTHETIC INV rad" },
+          kassirAuth,
+        )
+      ).status,
+      403,
+    );
+    const qosh = async (name: string) =>
+      (await (await inv({ action: "investor", name })).json()).id as string;
+    const a = await qosh("SYNTHETIC INV A");
+    const b = await qosh("SYNTHETIC INV B");
+    const kirim = (
+      investorId: string,
+      day: string,
+      amount: string,
+      kind = "capital",
+      form = "cash",
+    ) => inv({ action: "entry", investorId, day, amount, kind, form });
+    // A: 1000 $ 1-sentabrdan. B: 1000 $ 16-sentabrdan (15 kun ishlaydi).
+    assert.equal((await kirim(a, "2026-09-01", "1000")).status, 200);
+    assert.equal((await kirim(b, "2026-09-16", "1000")).status, 200);
+    // Qoldiqdan ortiq chiqarib bo'lmaydi.
+    assert.equal(
+      (await kirim(b, "2026-09-20", "5000", "return")).status,
+      400,
+    );
+
+    // Sentabrni kunlik o'rtacha kapital bilan yopamiz: 300 $ taqsimlanadi.
+    // A ning kapital-kunlari 30 kun x 1000 $, B ning 15 kun x 1000 $ -
+    // nisbat 2:1, demak 200 $ va 100 $.
+    assert.equal(
+      (
+        await inv({
+          action: "close",
+          month: "2026-09",
+          rule: "daily",
+          profit: "300",
+          rate: 12_000,
+        })
+      ).status,
+      200,
+    );
+    const ulush = (
+      await pool.query(
+        `SELECT i.name,s.capital_days,s.cents FROM investor_shares s
+ JOIN investors i ON i.id=s.investor_id
+ WHERE s.branch_id=$1 AND s.month='2026-09-01' ORDER BY i.name`,
+        [b1],
+      )
+    ).rows.map((r) => [r.name, Number(r.capital_days), Number(r.cents)]);
+    assert.deepEqual(ulush, [
+      ["SYNTHETIC INV A", 3_000_000, 20_000],
+      ["SYNTHETIC INV B", 1_500_000, 10_000],
+    ]);
+    // Reinvestitsiya: ulush kapitalga qo'shiladi va KEYINGI oydan ishlaydi.
+    const hisoblangan = (
+      await pool.query(
+        `SELECT i.name,e.day::text,e.kind,e.cents FROM investor_entries e
+ JOIN investors i ON i.id=e.investor_id
+ WHERE e.branch_id=$1 AND e.form='accrual' ORDER BY i.name`,
+        [b1],
+      )
+    ).rows.map((r) => [r.name, r.day, r.kind, Number(r.cents)]);
+    assert.deepEqual(hisoblangan, [
+      ["SYNTHETIC INV A", "2026-10-01", "profit", 20_000],
+      ["SYNTHETIC INV B", "2026-10-01", "profit", 10_000],
+    ]);
+    // Bir oy ikki marta yopilmaydi.
+    assert.equal(
+      (
+        await inv({
+          action: "close",
+          month: "2026-09",
+          rule: "daily",
+          profit: "300",
+          rate: 12_000,
+        })
+      ).status,
+      400,
+    );
+    // Hisoblangan yozuvni bekor qilib bo'lmaydi - oy muzlatilgan.
+    const accrual = (
+      await pool.query(
+        "SELECT id FROM investor_entries WHERE branch_id=$1 AND form='accrual' LIMIT 1",
+        [b1],
+      )
+    ).rows[0].id;
+    assert.equal(
+      (
+        await inv({
+          action: "void",
+          entryId: accrual,
+          reason: "Shunchaki urinib ko‘ramiz",
+        })
+      ).status,
+      400,
+    );
+    // Zarar ham xuddi shu formulada: kapitaldan ayriladi.
+    assert.equal(
+      (
+        await inv({
+          action: "close",
+          month: "2026-08",
+          rule: "daily",
+          profit: "-60",
+          rate: 12_000,
+        })
+      ).status,
+      400,
+      "avgustda ishlagan kapital yo‘q edi",
+    );
+    const html = await (
+      await fetch(origin + "/erp?branch=" + b1 + "&tab=investors&oy=2026-09", {
+        headers: { cookie: auth },
+      })
+    ).text();
+    assert.ok(html.includes("SYNTHETIC INV A"));
+    assert.ok(html.includes("Oy ichida kunlik o‘rtacha"));
+    // Ko'rish huquqi yo'q rol bo'limni ochmaydi.
+    const yopiq = await (
+      await fetch(origin + "/erp?branch=" + b1 + "&tab=investors", {
+        headers: { cookie: await login(viewer + "@example.invalid") },
+      })
+    ).text();
+    assert.ok(yopiq.includes("huquqi yo‘q"));
   },
 );
