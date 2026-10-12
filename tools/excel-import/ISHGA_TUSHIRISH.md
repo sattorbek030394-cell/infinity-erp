@@ -335,3 +335,42 @@ Hali yo'q:
 
 Shuning uchun birinchi hafta Excel'ni yopmang: dasturda tuzgan shartnomani
 Excelga ham kiriting va raqamlarni solishtirib turing.
+
+## Investor kapitalini ko'chirish
+
+Investor varaqlari ham import qilinadigan bo'ldi:
+
+```
+python3 tools/excel-import/import.py "Yagona_Ombor_V3.xlsm" out \
+  --sheets "Investorlar,Investor daftari"
+psql $DATABASE_URL -f out/load.sql
+```
+
+- **Investorlar** — ism va telefon. `investors` jadvaliga tushadi; takror
+  ism bo'lsa qo'shilmaydi (`on conflict (tenant_id,branch_id,name)`).
+- **Investor daftari** — har bir kapital kirimi va qaytarimi aniq sanasi
+  bilan. Summa **"Summa USD"** ustunidan olinadi, chunki kapital
+  dollarda yuritiladi. "Shakl" ustuni `Tovar` bo'lsa yozuv `goods`,
+  aks holda `cash` bo'ladi. Operatsiya nomi tanilmasa qator o'tkazib
+  yuboriladi va `skipped.csv` ga sababi bilan yoziladi.
+- **Investor foyda** import qilinmaydi: oylik taqsimot ERPda "Oyni
+  yopish" orqali kiritiladi, chunki har oyning qoidasi va kapital-kunlari
+  yopish paytida muzlatiladi.
+
+Haqiqiy fayl ustida tekshirilgan natija (12.10.2026):
+
+| | Natija |
+| --- | ---: |
+| Investor | 3 ta |
+| Kapital yozuvi | 74 ta, 12.03–29.09.2026 |
+| Tovar ko'rinishida | 51 305 USD |
+| Naqd | 17 422 USD |
+| **Jami kapital** | **68 727 USD** |
+
+Uchala raqam ham Excel'dagi "Investorlar" varag'ining JAMI qatoriga
+aynan to'g'ri keladi — ya'ni bir yozuv ham tushib qolmagan va ikki
+marta sanalmagan.
+
+Ko'chirgandan keyin ERPda "Investorlar" bo'limiga kirib har bir
+investorning kapitali va kapital-kunlarini ko'rish mumkin. Oylarni
+yopish — mart'dan boshlab ketma-ket, har oyning o'z qoidasi bilan.

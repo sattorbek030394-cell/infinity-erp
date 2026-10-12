@@ -77,9 +77,9 @@ SHEETS = {
     "Hisobot": ("Hisoblangan ko'rinish", False, []),
     "Baza": ("Ichki hisob qatlami", False, []),
     "Yetkazib beruvchilar": ("Hisoblangan ko'rinish — Kirimdan chiqadi", False, []),
-    "Investorlar": ("Investor moduli dasturda hali yo'q", False, []),
-    "Investor daftari": ("Investor moduli dasturda hali yo'q", False, []),
-    "Investor foyda": ("Investor moduli dasturda hali yo'q", False, []),
+    "Investorlar": ("Investorlarning ismi va telefoni", True, []),
+    "Investor daftari": ("Kapital kirimlari va qaytarimlari", True, ["Investorlar"]),
+    "Investor foyda": ("Oylik taqsimot — ERPda oy yopish orqali kiritiladi", False, []),
 }
 WALLETS = {
     "Naqd UZS": "cash_uzs",
@@ -121,10 +121,12 @@ def main(src, outdir, tanlangan):
     bos = lambda name: wb[name] if name in tanlangan else None
     K, C, N, T = (bos("Kirim"), bos("Chiqim"), bos("Nasiya"), bos("To'lovlar"))
     KS, KD = bos("Kassa"), bos("Kassa daftari")
+    IV, IDF = bos("Investorlar"), bos("Investor daftari")
 
     skipped = []
     rates, suppliers = {}, {}
     inventory, customers, contracts, installments, payments = [], [], [], [], []
+    investors, investor_entries = [], []
 
     def rate(dt, v):
         r = soum(v)
@@ -296,7 +298,56 @@ def main(src, outdir, tanlangan):
         ("cash_entries", ["id", "tenant_id", "branch_id", "wallet", "entry_date",
                           "amount_minor", "category", "note", "operation_id"],
          cash_rows, "(id)"),
+        ("investors", ["id", "tenant_id", "branch_id", "name", "phone"],
+         investors, "(tenant_id,branch_id,name)"),
+        ("investor_entries", ["id", "tenant_id", "branch_id", "investor_id", "day",
+                              "kind", "form", "cents", "note"],
+         investor_entries, "(id)"),
     ]
+
+    # ---------- Investorlar -> investors
+    # Varaqning yuqorisida sozlamalar turadi, jadval sarlavhasi 7-qatorda.
+    inv_ids = {}
+    for r in range(8, (IV.max_row + 1) if IV else 8):
+        nom = s(IV.cell(r, 2).value)
+        if not nom or nom.upper() == "JAMI":
+            continue
+        inv_ids[nom] = uid("investor", nom)
+        investors.append([inv_ids[nom], TENANT, BRANCH, nom, txt(IV.cell(r, 3).value)[:40]])
+
+    # ---------- Investor daftari -> investor_entries
+    # Kapital dollarda yuritiladi, shuning uchun "Summa USD" ustuni
+    # olinadi. Ishora turdan chiqadi: kirim musbat, qaytarim manfiy.
+    OPS = {
+        "kapital kiritish": ("capital", 1),
+        "kapital qaytarish": ("return", -1),
+        "kapitalni qaytarish": ("return", -1),
+        "daromad to'lovi": ("payout", -1),
+        "daromad to‘lovi": ("payout", -1),
+        "daromad olish": ("payout", -1),
+    }
+    FORMS = {"tovar": "goods"}
+    for r in range(2, (IDF.max_row + 1) if IDF else 2):
+        dt, nom = d(IDF.cell(r, 2).value), s(IDF.cell(r, 3).value)
+        if not dt or not nom:
+            continue
+        if nom not in inv_ids:
+            # Investorlar varag'i tanlanmagan bo'lsa bazada bo'lishi
+            # mumkin: bog'lanishni load.sql tekshiradi.
+            if IV is not None:
+                skipped.append(("Investor daftari", r,
+                                "investor Investorlar varag'ida yo'q: %s" % nom)); continue
+            inv_ids[nom] = uid("investor", nom)
+        op = (s(IDF.cell(r, 4).value) or "").lower()
+        if op not in OPS:
+            skipped.append(("Investor daftari", r, "operatsiya tanilmadi: %r" % op)); continue
+        kind, ishora = OPS[op]
+        c_ = cents(IDF.cell(r, 8).value)
+        if c_ <= 0:
+            skipped.append(("Investor daftari", r, "summa noto'g'ri")); continue
+        shakl = FORMS.get((s(IDF.cell(r, 5).value) or "").lower(), "cash")
+        investor_entries.append([uid("inv_entry", nom, r), TENANT, BRANCH, inv_ids[nom],
+                                 dt, kind, shakl, ishora * c_, txt(IDF.cell(r, 9).value)[:200]])
 
     # Bog'liqlik tekshiruvi: bog'lanishi topilmagan qator import qilinmaydi
     # va soni aytiladi (TZ 10.1 - jim import qilinmaydi).
@@ -314,6 +365,10 @@ def main(src, outdir, tanlangan):
         "payments": [
             ("exists(select 1 from contracts c where c.id=t.contract_id)",
              "shartnoma bazada topilmadi"),
+        ],
+        "investor_entries": [
+            ("exists(select 1 from investors i where i.id=t.investor_id)",
+             "investor bazada topilmadi"),
         ],
     }
     # cash_entries ga muallif kerak: bazadagi administrator yoziladi.
