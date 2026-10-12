@@ -4,6 +4,45 @@ Ikki filial uchun ishlaydigan boshlang‘ich dastur: xavfsiz login, Dashboard, I
 
 **Excel mosligi tasdiqlanmagan.** `Yangi Hisobot 10.10.2026.xlsm` audit uchun manba. Fayl import qilinmagan. Kassa formulalarining cheklangan sinovida sana-vaqt xatolari aniqlangan; to‘liq audit tugamagan. Dashboarddagi olingan mablag‘ Kassa yoki sof foyda emas.
 
+## Tezkor sinov (Docker bilan)
+
+Postgres o'rnatish shart emas. Node.js 22+ va Docker bo'lsa yetarli:
+
+```
+git clone -b nasiya-biznes <repo>
+cd infinity-erp
+docker compose up -d
+npm ci
+cp .env.example .env.local
+```
+
+`.env.local` ni oching va ikki qatorni yozing:
+
+```
+DATABASE_URL=postgres://infinity:infinity@localhost:5433/infinity
+DEMO_PASSWORD=<kamida 12 belgili parol>
+```
+
+So'ngra:
+
+```
+npm run migrate
+npm run seed
+npm run dev
+```
+
+[localhost:3000](http://localhost:3000) ni ochib `demo@example.invalid` va
+o'sha parol bilan kiring. Seed ikkita filial va sun'iy qurilmalar
+yaratadi — haqiqiy ma'lumot tegmaydi.
+
+Sinab ko'rish ketma-ketligi: Omborga qurilma qo'shing → Nasiya
+shartnomasi tuzing → To'lov kiritib ko'ring → Erta yopish hisobini
+chiqaring → Foyda bo'limida raqamlarning ustiga bosib tafsilotini
+ko'ring → Investorlar bo'limida kapital kiritib oyni yopib ko'ring.
+
+To'xtatish: `docker compose down`. Bazani ham o'chirish:
+`docker compose down -v`.
+
 ## Ishga tushirish
 
 Texnik yordamchi uchun: Node.js 22+, PostgreSQL 17 va bo‘sh ma’lumotlar bazasi kerak.

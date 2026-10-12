@@ -1,0 +1,33 @@
+# Sinov uchun baza. Postgres o'rnatish shart emas: Docker bo'lsa yetarli.
+#
+#   docker compose up -d
+#   npm ci
+#   cp .env.example .env.local      # DATABASE_URL ni quyidagidan oling
+#   npm run migrate && npm run seed
+#   npm run dev                     # http://localhost:3000
+#
+# DATABASE_URL=postgres://infinity:infinity@localhost:5433/infinity
+#
+# Port 5433 ataylab: mashinada boshqa Postgres ishlab turgan bo'lsa
+# urishmaydi. To'xtatish: docker compose down. Ma'lumotni ham
+# o'chirish: docker compose down -v
+services:
+  db:
+    image: postgres:17
+    container_name: infinity-db
+    environment:
+      POSTGRES_USER: infinity
+      POSTGRES_PASSWORD: infinity
+      POSTGRES_DB: infinity
+    ports:
+      - "5433:5432"
+    volumes:
+      - infinity-pgdata:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U infinity -d infinity"]
+      interval: 5s
+      timeout: 5s
+      retries: 10
+
+volumes:
+  infinity-pgdata:
