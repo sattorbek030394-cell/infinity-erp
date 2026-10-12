@@ -5,6 +5,7 @@ import { db, transaction } from "./db";
 import { can } from "./domain";
 import { QOIDALAR } from "./investor-names";
 import { postInvestorCash } from "./cash";
+import { readProfit } from "./profit";
 import type { Wallet } from "./cash-domain";
 
 /**
@@ -80,13 +81,24 @@ export const closeSchema = z.object({
   action: z.literal("close"),
   month: z.string().regex(/^\d{4}-(0[1-9]|1[0-2])$/),
   rule: z.enum(QOIDALAR).default("daily"),
-  // Investorlarga tegishli natija: sof foydaning 80% i. Zarar bo'lsa
-  // oldiga minus qo'yiladi.
-  profit: z
-    .string()
-    .regex(/^-?\d{1,9}(\.\d{1,2})?$/, "Natijani dollarda yozing")
-    .transform((v) => Math.round(Number(v) * 100)),
-  rate: z.coerce.number().int().min(1).max(100_000_000),
+  // Bo'sh qoldirilsa dastur foyda hisobotidan hisoblaydi. Qo'lda
+  // yozilsa - sababi majburiy, chunki hisobotdan chetga chiqiladi.
+  profit: z.preprocess(
+    (x) => (x === "" || x === null ? undefined : x),
+    z
+      .string()
+      .regex(/^-?\d{1,9}(\.\d{1,2})?$/, "Natijani dollarda yozing")
+      .transform((v) => Math.round(Number(v) * 100))
+      .optional(),
+  ),
+  rate: z.preprocess(
+    (x) => (x === "" || x === null ? undefined : x),
+    z.coerce.number().int().min(1).max(100_000_000).optional(),
+  ),
+  overrideReason: z.preprocess(
+    (x) => (x === "" || x === null ? undefined : x),
+    z.string().trim().min(5).max(160).optional(),
+  ),
 });
 
 /** Oyning oxirgi kuni, YYYY-MM-DD. */
@@ -133,6 +145,52 @@ export function taqsimla(
 }
 
 type Q = { query: (sql: string, args?: unknown[]) => Promise<any> };
+
+/**
+ * Oyning natijasi foyda hisobotidan.
+ *
+ * Sof foyda so'mda chiqadi, investor hisobi esa dollarda yuritiladi,
+ * shuning uchun oy kursi kerak. "Oy kursi" - shu oyda yozilgan
+ * kurslarning o'rtachasi: oylik foyda bir kunning emas, butun oyning
+ * oqimi, demak bir kunning kursi bilan o'tkazish noto'g'ri bo'lardi.
+ * Oyda kurs yozilmagan bo'lsa oy oxiridagi oxirgi ma'lum kurs olinadi.
+ */
+export async function oylikTaklif(branchId: string, oy: string) {
+  const s = await scope(branchId);
+  if (!can(s.role, "investor.read")) throw new Error("Ruxsat yo‘q");
+  const hisobot = await readProfit(branchId, oy, 1);
+  const sofFoyda = hisobot.joriy.sofFoyda;
+  const kurs = Number(
+    (
+      await db.query(
+        `SELECT COALESCE(
+ (SELECT round(avg(rate))::bigint FROM exchange_rates
+  WHERE tenant_id=$1 AND day>=$2::date AND day<$2::date+interval '1 month'),
+ (SELECT rate FROM exchange_rates WHERE tenant_id=$1 AND day<=$3::date
+  ORDER BY day DESC LIMIT 1)) kurs`,
+        [s.tenant_id, oy + "-01", oyOxiri(oy)],
+      )
+    ).rows[0].kurs ?? 0,
+  );
+  const bp = Number(
+    (
+      await db.query(
+        "SELECT investor_share_bp FROM nasiya_settings WHERE tenant_id=$1 AND branch_id=$2",
+        [s.tenant_id, s.branch_id],
+      )
+    ).rows[0]?.investor_share_bp ?? 8000,
+  );
+  // So'm -> sent: musbat ham, manfiy ham bir xil yaxlitlanadi.
+  const netCents = kurs > 0 ? Math.round((sofFoyda * 100) / kurs) : 0;
+  return {
+    oy,
+    sofFoyda,
+    kurs,
+    bp,
+    netCents,
+    investorCents: Math.round((netCents * bp) / 10000),
+  };
+}
 
 /**
  * Oynadagi kapital-kunlar.
@@ -249,6 +307,19 @@ export async function writeInvestor(raw: unknown) {
     const v = closeSchema.parse(raw);
     const dan = v.month + "-01",
       gacha = oyOxiri(v.month);
+    // Natija va kurs bo'sh bo'lsa hisobotdan olinadi; qo'lda yozilsa
+    // sababi majburiy, chunki hisobotdan chetga chiqiladi.
+    const taklif = await oylikTaklif(v.branchId, v.month);
+    const profit = v.profit ?? taklif.investorCents;
+    const rate = v.rate ?? taklif.kurs;
+    if (!rate) throw new Error("Oy kursi yo‘q - kurslar jadvaliga yozing");
+    if (
+      (v.profit !== undefined && v.profit !== taklif.investorCents) ||
+      (v.rate !== undefined && v.rate !== taklif.kurs)
+    ) {
+      if (!v.overrideReason)
+        throw new Error("Hisobotdan boshqa raqam yozilsa sababi kerak");
+    }
     const bugun = (
       await db.query("SELECT (now() AT TIME ZONE 'Asia/Tashkent')::date::text d")
     ).rows[0].d as string;
@@ -260,17 +331,21 @@ export async function writeInvestor(raw: unknown) {
       const kunlar = (await kapitalKunlar(c, s, dan, oynaGacha))
         .map((r) => ({ investorId: r.investor_id, kunlar: Number(r.kunlar) }))
         .filter((r) => r.kunlar > 0);
-      const ulush = taqsimla(v.profit, kunlar);
+      const ulush = taqsimla(profit, kunlar);
       await c.query(
-        `INSERT INTO investor_months(tenant_id,branch_id,month,rule,profit_cents,rate,closed_by)
- VALUES($1,$2,$3::date,$4,$5,$6,$7)`,
+        `INSERT INTO investor_months(tenant_id,branch_id,month,rule,profit_cents,rate,
+ net_cents,share_bp,override_reason,closed_by)
+ VALUES($1,$2,$3::date,$4,$5,$6,$7,$8,$9,$10)`,
         [
           s.tenant_id,
           s.branch_id,
           dan,
           v.rule,
-          v.profit,
-          v.rate,
+          profit,
+          rate,
+          taklif.netCents,
+          taklif.bp,
+          v.overrideReason ?? null,
           s.userId,
         ],
       );
@@ -337,7 +412,8 @@ export async function readInvestors(branchId: string, oyRaw?: string) {
   const kunlar = await kapitalKunlar(db, s, oy + "-01", bugun);
   const oylar = (
     await db.query(
-      `SELECT to_char(m.month,'YYYY-MM') oy,m.rule,m.profit_cents,m.rate,m.closed_at
+      `SELECT to_char(m.month,'YYYY-MM') oy,m.rule,m.profit_cents,m.rate,m.closed_at,
+ m.net_cents,m.share_bp,m.override_reason
  FROM investor_months m WHERE m.tenant_id=$1 AND m.branch_id=$2
  ORDER BY m.month DESC LIMIT 24`,
       args,
@@ -362,7 +438,11 @@ export async function readInvestors(branchId: string, oyRaw?: string) {
     )
   ).rows;
   const jamiKun = kunlar.reduce((a, b) => a + Number(b.kunlar), 0);
+  // Yopilmagan oy uchun taklif: nimadan chiqqani ekranda ko'rinadi.
+  const yopilgan = oylar.some((r) => r.oy === oy);
+  const taklif = yopilgan ? null : await oylikTaklif(branchId, oy);
   return {
+    taklif,
     oy,
     bugun,
     role: s.role,
@@ -386,6 +466,9 @@ export async function readInvestors(branchId: string, oyRaw?: string) {
       rule: r.rule as string,
       profit: Number(r.profit_cents),
       rate: Number(r.rate),
+      net: r.net_cents === null ? null : Number(r.net_cents),
+      bp: r.share_bp === null ? null : Number(r.share_bp),
+      sabab: (r.override_reason as string | null) ?? "",
     })),
     ulushlar: ulushlar.map((r) => ({
       name: r.name as string,

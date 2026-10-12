@@ -185,6 +185,7 @@ export function InvestorPanel({
               href={"/erp?branch=" + branchId + "&tab=investors&oy=" + o.oy}
             >
               {o.oy} · {usd(o.profit)}
+              {o.sabab ? " ·  qo‘lda" : ""}
             </a>
           ))}
         </nav>
@@ -291,11 +292,29 @@ export function InvestorPanel({
             </label>
             <label>
               Investorlarga tegishli natija, $
-              <input name="profit" type="text" required placeholder="3112.36" />
+              <input
+                name="profit"
+                type="text"
+                placeholder={
+                  data.taklif
+                    ? (data.taklif.investorCents / 100).toFixed(2)
+                    : "hisobotdan olinadi"
+                }
+              />
             </label>
             <label>
               Oy kursi
-              <input name="rate" type="number" required min={1} step={1} />
+              <input
+                name="rate"
+                type="number"
+                min={1}
+                step={1}
+                placeholder={data.taklif ? String(data.taklif.kurs) : ""}
+              />
+            </label>
+            <label>
+              Hisobotdan chetga chiqsa: sababi
+              <input name="overrideReason" type="text" maxLength={160} />
             </label>
             <label>
               Qoida
@@ -308,11 +327,27 @@ export function InvestorPanel({
               </select>
             </label>
             <button disabled={busy}>Yopish va taqsimlash</button>
+            {data.taklif ? (
+              <p className="hisob">
+                {data.oy} uchun hisobot:{" "}
+                <strong>
+                  {data.taklif.sofFoyda.toLocaleString("uz-UZ")} so‘m
+                </strong>{" "}
+                sof foyda ÷ oy kursi{" "}
+                <strong>{data.taklif.kurs.toLocaleString("uz-UZ")}</strong> ={" "}
+                <strong>{usd(data.taklif.netCents)}</strong> ×{" "}
+                {data.taklif.bp / 100}% ={" "}
+                <strong>{usd(data.taklif.investorCents)}</strong>{" "}
+                investorlarga. Maydonlarni bo‘sh qoldirsangiz shu raqam
+                olinadi.
+              </p>
+            ) : null}
             <p>
-              Natija — sof foydaning investorlarga tegishli 80% i. Zarar
-              bo‘lsa oldiga minus qo‘yiladi: zarar ham xuddi shu formulada
-              taqsimlanadi va kapitaldan ayriladi. Yopilgan oy qayta
-              hisoblanmaydi.
+              Natija — sof foydaning investorlarga tegishli ulushi, foyda
+              hisobotidan olinadi. Qo‘lda boshqa raqam yozilsa sababi
+              majburiy va u yozuvda qolib ketadi. Zarar bo‘lsa oldiga minus
+              qo‘yiladi: zarar ham xuddi shu formulada taqsimlanadi va
+              kapitaldan ayriladi. Yopilgan oy qayta hisoblanmaydi.
             </p>
           </form>
         </>
