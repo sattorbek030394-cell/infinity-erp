@@ -43,6 +43,7 @@ function telegram(r: Awaited<ReturnType<typeof readProfit>>) {
     `Sotuv summasi: ${som(j.nasiyaNarx + j.naqdNarx + j.qarzNarx)} so'm`,
     `Sotuv marjasi: ${som(j.marja)} so'm`,
     `Nasiya daromadi: ${som(j.ustama)} so'm`,
+    ...(j.kursFarqi ? [`Kurs farqi: ${som(j.kursFarqi)} so'm`] : []),
     `Xarajat: ${som(j.xarajatUzs + (r.kurs ? Math.round((j.xarajatUsd * r.kurs) / 100) : 0))} so'm`,
     `Sof foyda: ${som(j.sofFoyda)} so'm`,
     "",
@@ -125,9 +126,18 @@ export function ProfitPanel({
           </p>
         </section>
         <section>
+          <h2>Kurs farqi</h2>
+          <strong>{money(j.kursFarqi)}</strong>
+          <p>
+            {j.kursFarqi
+              ? "Dollardagi qarz boshqa kursda to‘langanidan"
+              : "Dollardagi qarzda kurs o‘zgarmagan"}
+          </p>
+        </section>
+        <section>
           <h2>Sof foyda</h2>
           <strong>{money(j.sofFoyda)}</strong>
-          <p>Marja + nasiya daromadi − xarajat</p>
+          <p>Marja + nasiya daromadi + kurs farqi − xarajat</p>
         </section>
       </div>
       {j.taqsimotUzs || j.taqsimotUsd ? (
@@ -189,6 +199,7 @@ export function ProfitPanel({
             <th>Tannarx</th>
             <th>Marja</th>
             <th>Nasiya daromadi</th>
+            <th>Kurs farqi</th>
             <th>Xarajat</th>
             <th>Sof foyda</th>
           </tr>
@@ -214,6 +225,7 @@ export function ProfitPanel({
               </td>
               <td>{money(o.marja)}</td>
               <td>{money(o.ustama)}</td>
+              <td>{money(o.kursFarqi)}</td>
               <td>{money(o.xarajatUzs + usdSom(o.xarajatUsd))}</td>
               <td>
                 <strong>{money(o.sofFoyda)}</strong>
@@ -339,7 +351,9 @@ export function ProfitPanel({
         Bu boshqaruv hisobi, rasmiy buxgalteriya foydasi emas. Nasiya
         daromadi to‘lov tushganda tan olinadi, shartnoma tuzilganda emas.
         Boshlang‘ich to‘lov qurilma narxining bir qismi — nasiya daromadiga
-        kirmaydi. Telefon xaridi va ta‘minotchiga to‘lov xarajat emas:
+        kirmaydi. Kurs farqi faqat qarzga sotishda tug‘iladi: u yerda qarz
+        dollarda, so‘mdagi qiymati esa sotuv kursida qotgan. Nasiya
+        shartnomasi so‘mda yuritilgani uchun unda kurs farqi bo‘lmaydi. Telefon xaridi va ta‘minotchiga to‘lov xarajat emas:
         ular tannarx orqali marjada hisobga olingan.
         {report.kurs
           ? ` Dollardagi xarajat 1 USD = ${money(report.kurs)} kursi bilan so‘mga o‘tkazildi.`

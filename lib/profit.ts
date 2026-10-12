@@ -48,6 +48,7 @@ export type OylikFoyda = {
   marja: number;
   ustama: number;
   bekorUstama: number;
+  kursFarqi: number;
   xarajatUzs: number;
   xarajatUsd: number;
   taqsimotUzs: number;
@@ -147,6 +148,21 @@ export async function readProfit(branchId: string, oyRaw: string, oylar = 6) {
  AND (x.decided_at AT TIME ZONE 'Asia/Tashkent')::date<$4::date+interval '1 month'
  GROUP BY 1`,
   );
+  // Kurs farqi: DOLLARDAGI qarz so'mda to'langanda paydo bo'ladi.
+  // Qarzga sotishda qoldiq dollarda, so'mdagi kitob qiymati esa sotuv
+  // kursida qotgan - to'lov boshqa kursda tushsa farq qoladi va u
+  // haqiqiy daromad yoki zarar. Nasiya shartnomasi so'mda yuritilgani
+  // uchun unda kurs farqi tug'ilmaydi: so'mdagi qarz so'mda qoladi.
+  const kursFarqi = await q(
+    `SELECT to_char((p.created_at AT TIME ZONE 'Asia/Tashkent')::date,'YYYY-MM') oy,
+ COALESCE(sum(p.amount - round(p.applied_cents::numeric*c.sale_rate/100)),0)::bigint summa
+ FROM payments p JOIN contracts c ON c.id=p.contract_id AND c.tenant_id=p.tenant_id AND c.branch_id=p.branch_id
+ WHERE p.tenant_id=$1 AND p.branch_id=$2 AND p.status='approved' AND p.voided_at IS NULL
+ AND c.kind='qarz' AND p.applied_cents IS NOT NULL
+ AND (p.created_at AT TIME ZONE 'Asia/Tashkent')::date>=$3::date
+ AND (p.created_at AT TIME ZONE 'Asia/Tashkent')::date<$4::date+interval '1 month'
+ GROUP BY 1`,
+  );
   // Xarajat va taqsimot: hamyon valyutasi bo'yicha alohida.
   const pul = (
     await db.query(
@@ -179,6 +195,7 @@ export async function readProfit(branchId: string, oyRaw: string, oylar = 6) {
       z = topil(qarz, o),
       u = topil(ustama, o),
       b = topil(bekor, o),
+      kf = topil(kursFarqi, o),
       x = pul.find((r) => r.oy === o && r.turi === "xarajat"),
       t = pul.find((r) => r.oy === o && r.turi === "taqsimot");
     const nasiyaNarx = Number(n?.narx ?? 0),
@@ -195,6 +212,7 @@ export async function readProfit(branchId: string, oyRaw: string, oylar = 6) {
         qarzNarx -
         qarzTannarx,
       ustamaDaromad = Number(u?.daromad ?? 0) - Number(b?.tuzatish ?? 0),
+      kurs_farqi = Number(kf?.summa ?? 0),
       xarajatUzs = Number(x?.uzs ?? 0),
       xarajatUsd = Number(x?.usd ?? 0);
     // Dollardagi xarajat: sent -> dollar -> so'm.
@@ -213,11 +231,12 @@ export async function readProfit(branchId: string, oyRaw: string, oylar = 6) {
       marja,
       ustama: ustamaDaromad,
       bekorUstama: Number(b?.summa ?? 0),
+      kursFarqi: kurs_farqi,
       xarajatUzs,
       xarajatUsd,
       taqsimotUzs: Number(t?.uzs ?? 0),
       taqsimotUsd: Number(t?.usd ?? 0),
-      sofFoyda: marja + ustamaDaromad - xarajatJami,
+      sofFoyda: marja + ustamaDaromad + kurs_farqi - xarajatJami,
     };
   });
 

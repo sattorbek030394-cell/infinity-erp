@@ -3689,6 +3689,15 @@ test(
       "foyda hisobotida qarzga sotish alohida ko‘rinsin",
     );
     assert.ok(html.includes("Qarzga sotish qoldig‘i"));
+    // Kurs farqi: 2-to'lov 12 500 kursda tushdi, qarzning so'mdagi
+    // kitob qiymati esa 12 000 sotuv kursida. Farq daromadga yoziladi.
+    //   1-to'lov: 2 000 000 − 16 667 sent × 120 = −40
+    //   2-to'lov: 2 291 625 − 18 333 sent × 120 = +91 665
+    assert.ok(
+      html.includes("91 625"),
+      "kurs farqi foyda hisobotida ko‘rinsin",
+    );
+    assert.ok(html.includes("Kurs farqi"));
   },
 );
 
