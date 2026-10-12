@@ -3794,8 +3794,35 @@ test(
           rate: 12_000,
         })
       ).status,
+      400,
+      "sababsiz qo‘lda raqam qabul qilinmaydi",
+    );
+    assert.equal(
+      (
+        await inv({
+          action: "close",
+          month: "2026-06",
+          rule: "daily",
+          profit: "300",
+          rate: 12_000,
+          overrideReason: "Iyun hisoboti qo‘lda tekshirildi",
+        })
+      ).status,
       200,
     );
+    // Hisoblashning o'zi ham muzlatiladi: nimadan chiqqani qoladi.
+    const muzlatilgan = (
+      await pool.query(
+        `SELECT rule,profit_cents,rate,share_bp,override_reason
+ FROM investor_months WHERE branch_id=$1 AND month='2026-06-01'`,
+        [b1],
+      )
+    ).rows[0];
+    assert.equal(muzlatilgan.rule, "daily");
+    assert.equal(Number(muzlatilgan.profit_cents), 30_000);
+    assert.equal(Number(muzlatilgan.rate), 12_000);
+    assert.equal(Number(muzlatilgan.share_bp), 8000);
+    assert.ok(muzlatilgan.override_reason.includes("qo‘lda tekshirildi"));
     const ulush = (
       await pool.query(
         `SELECT i.name,s.capital_days,s.cents FROM investor_shares s
@@ -3830,6 +3857,7 @@ test(
           rule: "daily",
           profit: "300",
           rate: 12_000,
+          overrideReason: "Takroriy yopishga urinish",
         })
       ).status,
       400,
@@ -3860,6 +3888,7 @@ test(
           rule: "daily",
           profit: "-60",
           rate: 12_000,
+          overrideReason: "Mayda kapital yo‘qligini tekshiramiz",
         })
       ).status,
       400,
