@@ -26,11 +26,19 @@ export async function readSettings(branchId: string) {
  ORDER BY u.email`,
     [s.tenant_id, s.userId, s.branch_id],
   );
+  const narx = (
+    await db.query(
+      "SELECT min_margin_bp,seller_bonus_bp FROM nasiya_settings WHERE tenant_id=$1 AND branch_id=$2",
+      [s.tenant_id, s.branch_id],
+    )
+  ).rows[0] ?? { min_margin_bp: 0, seller_bonus_bp: 0 };
   return {
     branch,
     members: members.rows,
     available: available.rows,
     actorId: s.userId,
+    minMarginBp: Number(narx.min_margin_bp),
+    sellerBonusBp: Number(narx.seller_bonus_bp),
   };
 }
 export async function updateSettings(raw: unknown) {
@@ -66,6 +74,15 @@ export async function updateSettings(raw: unknown) {
         "UPDATE branches SET name=$1 WHERE tenant_id=$2 AND id=$3",
         [input.name, tenant, input.branchId],
       );
+    } else if (input.action === "narx") {
+      // Minimal marja va sotuvchi bonusi: ikkisi ham foiz, bazis
+      // punktda saqlanadi.
+      await c.query(
+        `UPDATE nasiya_settings SET min_margin_bp=$1, seller_bonus_bp=$2
+ WHERE tenant_id=$3 AND branch_id=$4`,
+        [input.minMarginPct, input.sellerBonusPct, tenant, input.branchId],
+      );
+      action = "settings.narx";
     } else if (input.action === "create") {
       recordId = randomUUID();
       try {

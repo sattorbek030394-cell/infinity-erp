@@ -2,12 +2,13 @@ import { createHash, randomUUID } from "node:crypto";
 import { scope, AccessDeniedError } from "./auth";
 import { db, transaction } from "./db";
 import { saleSchema } from "./sales-schema";
+import { rollarAmal, narxTekshir, can } from "./domain";
 import { paymentWallet } from "./cash-domain";
 import type { HistoryFilters } from "./filters";
 export class SaleError extends Error {}
 export async function createSale(raw: unknown) {
   const v = saleSchema.parse(raw),
-    s = await scope(v.branchId, true);
+    s = await scope(v.branchId, "sale.create");
   return transaction(async (c) => {
     await c.query(
       "SELECT id FROM branches WHERE tenant_id=$1 AND id=$2 FOR UPDATE",
@@ -15,8 +16,8 @@ export async function createSale(raw: unknown) {
     );
     const role = (
       await c.query(
-        "SELECT role FROM memberships WHERE user_id=$1 AND tenant_id=$2 AND branch_id=$3 AND role IN ('admin','cashier')",
-        [s.userId, s.tenant_id, s.branch_id],
+        "SELECT role FROM memberships WHERE user_id=$1 AND tenant_id=$2 AND branch_id=$3 AND role=ANY($4)",
+        [s.userId, s.tenant_id, s.branch_id, rollarAmal("sale.create")],
       )
     ).rows[0]?.role;
     if (!role) throw new AccessDeniedError();
@@ -47,7 +48,7 @@ export async function createSale(raw: unknown) {
     }
     const item = (
       await c.query(
-        "SELECT id FROM inventory WHERE tenant_id=$1 AND branch_id=$2 AND id=$3 AND status='available' FOR UPDATE",
+        "SELECT id,cost FROM inventory WHERE tenant_id=$1 AND branch_id=$2 AND id=$3 AND status='available' FOR UPDATE",
         [s.tenant_id, s.branch_id, v.inventoryId],
       )
     ).rows[0];
@@ -55,6 +56,27 @@ export async function createSale(raw: unknown) {
       throw new SaleError(
         "Qurilma bu filial omborida mavjud emas yoki sotilgan",
       );
+    // Minimal marja chegarasi (TZ SALE). Nol bo'lsa tekshirmaydi.
+    const bp = Number(
+      (
+        await c.query(
+          "SELECT min_margin_bp FROM nasiya_settings WHERE tenant_id=$1 AND branch_id=$2",
+          [s.tenant_id, s.branch_id],
+        )
+      ).rows[0]?.min_margin_bp ?? 0,
+    );
+    let narxSabab: string | null = null;
+    try {
+      narxSabab = narxTekshir({
+        narx: v.amount,
+        tannarx: Number(item.cost),
+        bp,
+        reason: v.priceOverrideReason,
+        canOverride: can(role, "limit.override"),
+      });
+    } catch (e) {
+      throw new SaleError(e instanceof Error ? e.message : "Narx noto‘g‘ri");
+    }
     const id = randomUUID();
     await c.query("INSERT INTO cash_operations VALUES($1,$2,$3,$4)", [
       v.requestKey,
@@ -63,7 +85,7 @@ export async function createSale(raw: unknown) {
       hash,
     ]);
     await c.query(
-      "INSERT INTO cash_sales(id,tenant_id,branch_id,inventory_id,amount,method,customer_label,user_id,request_key) VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9)",
+      "INSERT INTO cash_sales(id,tenant_id,branch_id,inventory_id,amount,method,customer_label,user_id,request_key,seller,channel,price_override_by,price_override_reason) VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13)",
       [
         id,
         s.tenant_id,
@@ -74,6 +96,10 @@ export async function createSale(raw: unknown) {
         v.customerLabel,
         s.userId,
         v.requestKey,
+        v.seller,
+        v.channel,
+        narxSabab ? s.userId : null,
+        narxSabab,
       ],
     );
     const wallet = paymentWallet(v.method);

@@ -54,6 +54,69 @@ export function CashPanel({
         Omborga qurilma qo‘shish kassadan pul ayirmaydi; haqiqiy xarid to‘lovini
         chiqim sifatida yozing.
       </aside>
+      {report.expenses.length ? (
+        <section className="detailsection">
+          <h2>Shu oyning chiqimlari</h2>
+          <table>
+            <thead>
+              <tr>
+                <th>Kategoriya</th>
+                <th>So‘mda</th>
+                <th>Dollarda</th>
+              </tr>
+            </thead>
+            <tbody>
+              {report.expenses.map((x) => (
+                <tr key={x.category}>
+                  <td>{x.category}</td>
+                  <td>
+                    {BigInt(x.uzs) ? cashMoney(x.uzs, "cash_uzs") : "—"}
+                  </td>
+                  <td>
+                    {BigInt(x.usd) ? cashMoney(x.usd, "cash_usd") : "—"}
+                  </td>
+                </tr>
+              ))}
+              <tr>
+                <td>
+                  <strong>Jami</strong>
+                </td>
+                <td>
+                  <strong>
+                    {cashMoney(
+                      String(
+                        report.expenses.reduce(
+                          (n, x) => n + BigInt(x.uzs),
+                          0n,
+                        ),
+                      ),
+                      "cash_uzs",
+                    )}
+                  </strong>
+                </td>
+                <td>
+                  <strong>
+                    {cashMoney(
+                      String(
+                        report.expenses.reduce(
+                          (n, x) => n + BigInt(x.usd),
+                          0n,
+                        ),
+                      ),
+                      "cash_usd",
+                    )}
+                  </strong>
+                </td>
+              </tr>
+            </tbody>
+          </table>
+          <p>
+            Hamyonlar orasidagi o‘tkazma chiqim emas, shuning uchun bu
+            ro‘yxatda yo‘q. Telefon xaridi va ta‘minotchiga to‘lov tovarga
+            ketgan pul - operatsion xarajatdan alohida qarang.
+          </p>
+        </section>
+      ) : null}
       <CashForms
         branch={branch}
         today={report.today}

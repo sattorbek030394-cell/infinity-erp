@@ -28,10 +28,19 @@ jobs:
           node-version: "22"
           cache: npm
       - run: npm ci
-      - run: npm run migrate
-      - run: npm test
+      - run: npm run migrate 2>&1 | tee -a checks.log
+      - run: npm test 2>&1 | tee -a checks.log
         env:
           INTEGRATION_DATABASE_URL: ""
-      - run: npm run typecheck
-      - run: npm run build
-      - run: npm run test:integration
+      - run: npm run typecheck 2>&1 | tee -a checks.log
+      - run: npm run build 2>&1 | tee -a checks.log
+      - run: npm run test:integration 2>&1 | tee -a checks.log
+      # Tekshiruv yiqilsa oxirgi satrlar annotatsiya bo'lib chiqadi: log
+      # faylini yuklab olish imkoni bo'lmagan joyda ham xato ko'rinadi.
+      - if: failure()
+        run: |
+          [ -f checks.log ] || exit 0
+          printf '::error title=Tekshiruv yiqildi::'
+          tail -c 6000 checks.log | sed -e 's/%/%25/g' -e 's/\r//g' |
+            awk '{ printf "%s%%0A", $0 }'
+          echo

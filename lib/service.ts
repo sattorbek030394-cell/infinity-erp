@@ -3,13 +3,27 @@ import { scope } from "./auth";
 import { transaction, db } from "./db";
 import {
   itemSchema,
+  aralashQismlar,
   contractSchema,
   paymentSchema,
   schedule,
+  nasiyaTotals,
   assertPayment,
+  can,
+  tasdiqAmal,
+  qarzSotuvSchema,
+  qarzSotuvHisobi,
+  qarzTolovi,
+  sentga,
+  narxTekshir,
+  type Amal,
 } from "./domain";
+import type { z } from "zod";
 import type { PoolClient } from "pg";
-import { postCashReceipt } from "./cash";
+import { postCashReceipt, postPurchase } from "./cash";
+import { minorUnits, tushumMinor } from "./cash-domain";
+import { kunlikKurs } from "./kurs";
+import { qarzSql, qarzCentsSql } from "./qarz-sql";
 type Scope = {
   tenant_id: string;
   branch_id: string;
@@ -21,9 +35,232 @@ export async function createRecord(
   kind: string,
   input: unknown,
 ) {
-  const s = await scope(branchId, true);
+  // Har modulning o'z huquqi: omborchi kirim qiladi, undiruvchi to'lov
+  // kiritadi, sotuvchi shartnoma tuzadi - bir "yozish" huquqi emas.
+  const amal = {
+    inventory: "inventory.create",
+    contracts: "contract.create",
+    qarz: "credit.sale",
+    payments: "payment.create",
+  }[kind] as Amal | undefined;
+  if (!amal) throw new Error("Noto‘g‘ri modul");
+  const s = await scope(branchId, amal);
   return transaction((c) => writeRecord(c, s, kind, input));
 }
+type Shartnoma = z.infer<typeof contractSchema>;
+// Mijoz kartochkasi va limit tekshiruvi nasiya ham, qarzga sotish ham
+// uchun bir xil: faqat mijoz maydonlari kerak.
+type MijozMaydonlari = Pick<
+  Shartnoma,
+  | "customerName"
+  | "pnfl"
+  | "passport"
+  | "passportIssuer"
+  | "passportDate"
+  | "birthDate"
+  | "phone1"
+  | "phone2"
+  | "address"
+  | "icloudAccount"
+  | "icloudPhone"
+  | "limitOverrideReason"
+>;
+
+/** Minimal marja chegarasi, bazis punktda. Nol - cheklov yo'q. */
+async function minMarja(c: Pick<PoolClient, "query">, s: Scope) {
+  return Number(
+    (
+      await c.query(
+        "SELECT min_margin_bp FROM nasiya_settings WHERE tenant_id=$1 AND branch_id=$2",
+        [s.tenant_id, s.branch_id],
+      )
+    ).rows[0]?.min_margin_bp ?? 0,
+  );
+}
+
+/** Yetkazib beruvchi nomi bo'yicha topiladi yoki yaratiladi. */
+async function yetkazibBeruvchi(
+  c: Pick<PoolClient, "query">,
+  s: Scope,
+  name: string,
+) {
+  const r = await c.query(
+    `INSERT INTO suppliers(id,tenant_id,name) VALUES($1,$2,$3)
+ ON CONFLICT(tenant_id,name) DO UPDATE SET name=excluded.name RETURNING id`,
+    [randomUUID(), s.tenant_id, name],
+  );
+  return r.rows[0].id as string;
+}
+
+/** PAY-04: to'lovdan ortib qolgan summa mijoz avansi sifatida yoziladi. */
+export async function yozAvans(
+  c: Pick<PoolClient, "query">,
+  s: Scope,
+  paymentId: string,
+  contractId: string,
+  amount: number,
+) {
+  await c.query(
+    `INSERT INTO customer_advances(id,tenant_id,branch_id,contract_id,payment_id,amount)
+ VALUES($1,$2,$3,$4,$5,$6) ON CONFLICT(payment_id) DO NOTHING`,
+    [randomUUID(), s.tenant_id, s.branch_id, contractId, paymentId, amount],
+  );
+}
+
+/**
+ * Shartnoma summalari: narx berilsa ustamani dastur hisoblaydi.
+ *
+ * Foiz formadan kelmasa filial sozlamasidan olinadi, u ham bo'lmasa oyiga
+ * 5% - hozir Excel'da amalda shu foiz ishlatilyapti.
+ *
+ * Eski yo'l (faqat `total` berilgan) saqlanib turadi: unda ustama ajratilmaydi
+ * va `monthly_rate_bp` nol bo'lib qoladi, ya'ni bazada "hisoblanmagan" deb
+ * ko'rinadi.
+ */
+async function nasiyaShartlari(
+  c: Pick<PoolClient, "query">,
+  s: Scope,
+  v: Shartnoma,
+) {
+  if (v.priceUzs === undefined) {
+    const total = v.total!;
+    return { total, principal: total - v.downPayment, markup: 0, bp: 0 };
+  }
+  const sozlama = await c.query(
+    "SELECT default_rate_bp,min_down_bp FROM nasiya_settings WHERE tenant_id=$1 AND branch_id=$2",
+    [s.tenant_id, s.branch_id],
+  );
+  const row = sozlama.rows[0];
+  const bp = v.monthlyRateBp ?? Number(row?.default_rate_bp ?? 500);
+  const minDownBp = Number(row?.min_down_bp ?? 0);
+  if (v.downPayment * 10000 < v.priceUzs * minDownBp)
+    throw new Error("Boshlang‘ich to‘lov filial shartidan kichik");
+  const t = nasiyaTotals(v.priceUzs, v.downPayment, v.months, bp);
+  // Forma hisobni ko'rsatib turadi: ekranda ko'rilgan summa bilan bazaga
+  // yozilayotgani boshqa bo'lsa, jim o'tib ketmaydi.
+  if (v.total !== undefined && v.total !== t.total)
+    throw new Error("Jami summa hisobga mos emas");
+  return { total: t.total, principal: t.principal, markup: t.markup, bp };
+}
+
+/**
+ * Mijoz kartochkasi. PNFL bor mijoz ikkinchi marta telefon olsa, yangi
+ * kartochka ochilmaydi - borini to'ldiradi. Bo'sh kelgan maydon eski
+ * qiymatni o'chirib tashlamaydi.
+ */
+async function mijozYoz(
+  c: Pick<PoolClient, "query">,
+  s: Scope,
+  v: MijozMaydonlari,
+) {
+  const r = await c.query(
+    `INSERT INTO customers(id,tenant_id,full_name,passport,pnfl,passport_issuer,passport_date,
+ birth_date,phone1,phone2,address,icloud_account,icloud_phone)
+ VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13)
+ ON CONFLICT(tenant_id,pnfl) DO UPDATE SET
+ full_name=excluded.full_name,
+ passport=COALESCE(NULLIF(excluded.passport,''),customers.passport),
+ passport_issuer=COALESCE(NULLIF(excluded.passport_issuer,''),customers.passport_issuer),
+ passport_date=COALESCE(excluded.passport_date,customers.passport_date),
+ birth_date=COALESCE(excluded.birth_date,customers.birth_date),
+ phone1=COALESCE(NULLIF(excluded.phone1,''),customers.phone1),
+ phone2=COALESCE(NULLIF(excluded.phone2,''),customers.phone2),
+ address=COALESCE(NULLIF(excluded.address,''),customers.address),
+ icloud_account=COALESCE(NULLIF(excluded.icloud_account,''),customers.icloud_account),
+ icloud_phone=COALESCE(NULLIF(excluded.icloud_phone,''),customers.icloud_phone)
+ RETURNING id`,
+    [
+      randomUUID(),
+      s.tenant_id,
+      v.customerName,
+      v.passport,
+      v.pnfl ?? null,
+      v.passportIssuer,
+      v.passportDate ?? null,
+      v.birthDate ?? null,
+      v.phone1,
+      v.phone2,
+      v.address,
+      v.icloudAccount,
+      v.icloudPhone,
+    ],
+  );
+  return r.rows[0].id as string;
+}
+
+/**
+ * Nasiya berish qarori: qora ro'yxat va mijoz limiti (taklif 3.1).
+ *
+ * Limit raqamlari filial sozlamasidan olinadi; sozlama bo'lmasa haqiqiy
+ * ma'lumot tahlilidan chiqqan qiymatlar ishlatiladi: 2 ta faol shartnoma,
+ * 25 mln so'm qoldiq, qattiq chegara 40 mln.
+ *
+ * Limitdan oshsa rahbar sabab yozib o'tkaza oladi; qattiq chegaradan
+ * oshsa hech kim o'tkaza olmaydi. Qora ro'yxatdagi mijozga nasiya
+ * berilmaydi - uni avval ro'yxatdan chiqarish kerak.
+ *
+ * @returns limitdan oshirilgan bo'lsa sabab, aks holda null
+ */
+async function limitTekshir(
+  c: Pick<PoolClient, "query">,
+  s: Scope,
+  customerId: string,
+  yangiQarz: number,
+  v: MijozMaydonlari,
+) {
+  const mijoz = (
+    await c.query(
+      "SELECT full_name,blocked_at,blocked_reason FROM customers WHERE id=$1 AND tenant_id=$2 FOR UPDATE",
+      [customerId, s.tenant_id],
+    )
+  ).rows[0];
+  if (mijoz?.blocked_at)
+    throw new Error(
+      `Mijoz qora ro'yxatda: ${mijoz.blocked_reason}. Nasiya berilmaydi.`,
+    );
+  const sozlama = (
+    await c.query(
+      "SELECT max_active_contracts,max_exposure,hard_exposure FROM nasiya_settings WHERE tenant_id=$1 AND branch_id=$2",
+      [s.tenant_id, s.branch_id],
+    )
+  ).rows[0];
+  const maxSoni = Number(sozlama?.max_active_contracts ?? 2);
+  const maxQarz = Number(sozlama?.max_exposure ?? 25_000_000);
+  const qattiq = Number(sozlama?.hard_exposure ?? 40_000_000);
+  // Mijozning barcha filiallardagi faol qarzi - bir mijoz ikkinchi
+  // do'kondan ham olishi mumkin.
+  const holat = (
+    await c.query(
+      `SELECT count(*) n, COALESCE(sum(q.qarz),0) qarz FROM (
+ SELECT ${qarzSql()} qarz FROM contracts c
+ WHERE c.tenant_id=$1 AND c.customer_id=$2) q WHERE q.qarz>0`,
+      [s.tenant_id, customerId],
+    )
+  ).rows[0];
+  const soni = Number(holat.n),
+    qarz = Number(holat.qarz),
+    jami = qarz + yangiQarz;
+  const sabablar: string[] = [];
+  if (soni >= maxSoni)
+    sabablar.push(`${soni} ta faol shartnomasi bor (chegara ${maxSoni})`);
+  if (jami > maxQarz)
+    sabablar.push(
+      `jami qarzi ${(jami / 1e6).toFixed(1)} mln bo'ladi (chegara ${(maxQarz / 1e6).toFixed(0)} mln)`,
+    );
+  if (!sabablar.length) return null;
+  if (jami > qattiq)
+    throw new Error(
+      `Mijozning jami qarzi ${(jami / 1e6).toFixed(1)} mln bo'ladi - qattiq chegara ${(qattiq / 1e6).toFixed(0)} mln dan oshadi. Shartnoma tuzilmaydi.`,
+    );
+  if (!v.limitOverrideReason)
+    throw new Error(
+      `Mijoz limiti: ${sabablar.join(", ")}. Davom etish uchun rahbar sabab yozib tasdiqlashi kerak.`,
+    );
+  if (!can(s.role, "limit.override"))
+    throw new Error("Limitdan oshirishga faqat rahbar ruxsat bera oladi");
+  return v.limitOverrideReason;
+}
+
 async function writeRecord(
   c: Pick<PoolClient, "query">,
   s: Scope,
@@ -33,32 +270,189 @@ async function writeRecord(
   const id = randomUUID();
   if (kind === "inventory") {
     const v = itemSchema.parse(input);
+    // Tannarx dollarda kiritiladi, so'mdagi qiymatni dastur kirim kursi
+    // bilan o'zi hisoblaydi. Ikkisi ham saqlanadi: foyda hisobi kirim
+    // kursiga tayanadi. Prognoz sotuv narxi ham shu kurs bilan so'mga.
+    const usdCents = sentga(v.costUsd!);
+    const rate = v.costRate!;
+    const cost = Math.round((usdCents * rate) / 100);
+    const expectedCents = sentga(v.expectedPriceUsd!);
+    const expectedPrice = Math.round((expectedCents * rate) / 100);
+    if (!Number.isSafeInteger(cost) || cost < 1)
+      throw new Error("Tannarx noto‘g‘ri");
+    const supplierId = await yetkazibBeruvchi(c, s, v.supplier);
     await c.query(
-      "INSERT INTO inventory(id,tenant_id,branch_id,imei,model,cost) VALUES($1,$2,$3,$4,$5,$6)",
-      [id, s.tenant_id, s.branch_id, v.imei, v.model, v.cost],
+      `INSERT INTO inventory(id,tenant_id,branch_id,imei,imei2,brand,model,memory,sim_type,
+ color,region,condition,battery,purchase_date,cost,cost_usd_cents,cost_rate,
+ expected_price,expected_price_usd_cents,supplier_id,received_by,purchase_method,investor_id)
+ VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17,$18,$19,$20,$21,$22,$23)`,
+      [
+        id,
+        s.tenant_id,
+        s.branch_id,
+        v.imei!,
+        v.imei2 ?? "",
+        v.brand,
+        v.model,
+        v.memory,
+        v.simType!,
+        v.color,
+        v.region,
+        v.condition!,
+        v.condition === "B/U" ? String(v.battery) : "",
+        v.purchaseDate!,
+        cost,
+        usdCents,
+        rate,
+        expectedPrice > 0 ? expectedPrice : null,
+        expectedCents,
+        supplierId,
+        v.receivedBy,
+        v.purchaseMethod!,
+        v.investorId ?? null,
+      ],
     );
+    // TZ INV-02: to'lov turiga qarab kassadan chiqim yoki yetkazib
+    // beruvchi majburiyati. Investor tovari ikkisini ham yaratmaydi.
+    if (v.purchaseMethod === "debt") {
+      await c.query(
+        `INSERT INTO supplier_obligations(id,tenant_id,branch_id,supplier_id,inventory_id,amount,usd_cents,rate,created_by)
+ VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9)`,
+        [
+          randomUUID(),
+          s.tenant_id,
+          s.branch_id,
+          supplierId,
+          id,
+          cost,
+          usdCents,
+          rate,
+          s.userId,
+        ],
+      );
+    } else if (v.purchaseMethod === "mixed") {
+      // Aralash to'lov: har hamyondan o'z summasi chiqadi (USD dan sent,
+      // so'm hamyonlaridan so'm). Jami tannarxga teng ekani tekshiriladi.
+      const qismlar = aralashQismlar({
+        cost,
+        rate,
+        usdCents: v.mixUsd === undefined ? 0 : sentga(v.mixUsd),
+        naqdSom: v.mixCash ?? 0,
+        karta: v.mixCard ?? 0,
+        bank: v.mixBank ?? 0,
+      });
+      for (const q of qismlar) await postPurchase(c, s, id, q.minor, q.hamyon);
+    } else if (v.purchaseMethod !== "investor") {
+      const hamyon =
+        v.purchaseMethod === "cash_usd"
+          ? "cash_usd"
+          : v.purchaseMethod === "card"
+            ? "card_uzs"
+            : v.purchaseMethod === "bank"
+              ? "bank_uzs"
+              : "cash_uzs";
+      // USD hamyonidan sent chiqadi, so'm hamyonidan so'm.
+      await postPurchase(
+        c,
+        s,
+        id,
+        hamyon === "cash_usd" ? usdCents : cost,
+        hamyon,
+      );
+    } else {
+      // Investor tovari: kassada harakat yo'q, yetkazib beruvchi qarzi
+      // ham yo'q - tovarning tannarxi investorning kapitaliga yoziladi.
+      // Sana omborga kirgan kun: kapital-kun shu kundan boshlanadi.
+      const inv = await c.query(
+        "SELECT closed_at FROM investors WHERE id=$1 AND tenant_id=$2 AND branch_id=$3 FOR UPDATE",
+        [v.investorId, s.tenant_id, s.branch_id],
+      );
+      if (!inv.rowCount) throw new Error("Investor topilmadi");
+      if (inv.rows[0].closed_at)
+        throw new Error("Chiqib ketgan investorga kirim yozilmaydi");
+      await c.query(
+        `INSERT INTO investor_entries(id,tenant_id,branch_id,investor_id,inventory_id,day,
+ kind,form,cents,note,created_by)
+ VALUES($1,$2,$3,$4,$5,COALESCE($6::date,(now() AT TIME ZONE 'Asia/Tashkent')::date),
+ 'capital','goods',$7,$8,$9)`,
+        [
+          randomUUID(),
+          s.tenant_id,
+          s.branch_id,
+          v.investorId,
+          id,
+          v.purchaseDate ?? null,
+          usdCents,
+          v.model + " / " + v.imei,
+          s.userId,
+        ],
+      );
+    }
   } else if (kind === "contracts") {
     const v = contractSchema.parse(input);
     const item = await c.query(
-      "SELECT id FROM inventory WHERE id=$1 AND tenant_id=$2 AND branch_id=$3 AND status='available' FOR UPDATE",
+      "SELECT id,cost FROM inventory WHERE id=$1 AND tenant_id=$2 AND branch_id=$3 AND status='available' FOR UPDATE",
       [v.inventoryId, s.tenant_id, s.branch_id],
     );
     if (!item.rowCount) throw new Error("Mahsulot mavjud emas");
+    const { total, principal, markup, bp } = await nasiyaShartlari(c, s, v);
+    // Minimal marja: nasiya ustamasi hisobga olinmaydi - qurilmaning
+    // o'z narxi tannarxdan yetarlicha oshsin.
+    //
+    // Eski yo'lda (faqat `total` berilgan) ustama ajratilmaydi, ya'ni
+    // `principal + down` ustamani ham o'z ichiga oladi. Shunda marja
+    // ustama hisobiga katta ko'rinib, chegara ishlamay qolardi -
+    // shuning uchun chegara yoqilgan bo'lsa qurilma narxi talab
+    // qilinadi.
+    const marjaBp = await minMarja(c, s);
+    if (marjaBp > 0 && v.priceUzs === undefined)
+      throw new Error(
+        "Minimal marja chegarasi yoqilgan: qurilma narxini kiriting",
+      );
+    const narxSabab = narxTekshir({
+      narx: principal + v.downPayment,
+      tannarx: Number(item.rows[0].cost),
+      bp: marjaBp,
+      reason: v.priceOverrideReason,
+      canOverride: can(s.role, "limit.override"),
+    });
+    const customerId = v.customerName ? await mijozYoz(c, s, v) : null;
+    const override = customerId
+      ? await limitTekshir(c, s, customerId, principal + markup, v)
+      : null;
+    // Shartnoma raqami Excel'dagi kabi ketma-ket. Ikki kassir bir vaqtda
+    // tuzsa, UNIQUE(tenant_id,number) ikkinchisini rad etadi - qayta
+    // yuborilganda keyingi raqamni oladi.
     await c.query(
-      "INSERT INTO contracts(id,tenant_id,branch_id,inventory_id,customer_label,total,down_payment,months,start_date) VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9)",
+      `INSERT INTO contracts(id,tenant_id,branch_id,inventory_id,customer_id,customer_label,number,
+ total,down_payment,principal,markup,monthly_rate_bp,months,start_date,
+ limit_override_by,limit_override_reason,seller,channel,
+ price_override_by,price_override_reason)
+ VALUES($1,$2,$3,$4,$5,$6,(SELECT COALESCE(max(number),0)+1 FROM contracts WHERE tenant_id=$2),
+ $7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17,$18,$19)`,
       [
         id,
         s.tenant_id,
         s.branch_id,
         v.inventoryId,
-        v.customerLabel,
-        v.total,
+        customerId,
+        v.customerName ?? v.customerLabel,
+        total,
         v.downPayment,
+        principal,
+        markup,
+        bp,
         v.months,
         v.startDate,
+        override ? s.userId : null,
+        override,
+        v.seller,
+        v.channel,
+        narxSabab ? s.userId : null,
+        narxSabab,
       ],
     );
-    for (const p of schedule(v.total, v.downPayment, v.months, v.startDate))
+    for (const p of schedule(total, v.downPayment, v.months, v.startDate))
       await c.query("INSERT INTO installments VALUES($1,$2,$3,$4)", [
         id,
         p.sequence,
@@ -69,6 +463,81 @@ async function writeRecord(
       v.inventoryId,
     ]);
     await postCashReceipt(c, s, id, v.downPayment, v.downPaymentMethod, "down");
+  } else if (kind === "qarz") {
+    // Qarzga sotish: ustamasiz, bitta muddatli, qarzi dollarda.
+    const v = qarzSotuvSchema.parse(input);
+    const item = await c.query(
+      "SELECT id,cost FROM inventory WHERE id=$1 AND tenant_id=$2 AND branch_id=$3 AND status='available' FOR UPDATE",
+      [v.inventoryId, s.tenant_id, s.branch_id],
+    );
+    if (!item.rowCount) throw new Error("Mahsulot mavjud emas");
+    const h = qarzSotuvHisobi({
+      priceCents: sentga(v.priceUsd),
+      rate: v.rate,
+      tolovlar: v.tolovlar,
+    });
+    const narxSababQarz = narxTekshir({
+      narx: h.total,
+      tannarx: Number(item.rows[0].cost),
+      bp: await minMarja(c, s),
+      reason: v.priceOverrideReason,
+      canOverride: can(s.role, "limit.override"),
+    });
+    const customerId = v.customerName ? await mijozYoz(c, s, v) : null;
+    // Limit so'mda tekshiriladi: qarz ham mijozning xavfi, nasiya bilan
+    // bitta chegarada turadi.
+    const override = customerId
+      ? await limitTekshir(c, s, customerId, h.debtSom, v)
+      : null;
+    await c.query(
+      `INSERT INTO contracts(id,tenant_id,branch_id,inventory_id,customer_id,customer_label,number,
+ total,down_payment,principal,markup,monthly_rate_bp,months,start_date,
+ limit_override_by,limit_override_reason,seller,channel,
+ kind,total_cents,down_cents,sale_rate,due_date,
+ price_override_by,price_override_reason)
+ VALUES($1,$2,$3,$4,$5,$6,(SELECT COALESCE(max(number),0)+1 FROM contracts WHERE tenant_id=$2),
+ $7,$8,$9,0,0,1,(now() AT TIME ZONE 'Asia/Tashkent')::date,$10,$11,$12,$13,
+ 'qarz',$14,$15,$16,$17,$18,$19)`,
+      [
+        id,
+        s.tenant_id,
+        s.branch_id,
+        v.inventoryId,
+        customerId,
+        v.customerName ?? v.customerLabel,
+        h.total,
+        h.downSom,
+        h.debtSom,
+        override ? s.userId : null,
+        override,
+        v.seller,
+        v.channel,
+        sentga(v.priceUsd),
+        h.downCents,
+        v.rate,
+        v.dueDate,
+        narxSababQarz ? s.userId : null,
+        narxSababQarz,
+      ],
+    );
+    // Bitta "to'lov" - muddati kelganda Qarzdorlarda kechikkan bo'lib
+    // ko'rinishi uchun. Grafik yo'q, shuning uchun bitta qator.
+    await c.query("INSERT INTO installments VALUES($1,1,$2,$3)", [
+      id,
+      v.dueDate,
+      h.debtSom,
+    ]);
+    await c.query("UPDATE inventory SET status='sold' WHERE id=$1", [
+      v.inventoryId,
+    ]);
+    // Har hamyon o'z birligida kassaga tushadi. Bir hamyonga ikki qator
+    // kiritilgan bo'lsa qo'shib yuboriladi: kassada hamyonga bitta yozuv.
+    const hamyonlar = new Map<string, number>();
+    for (const t of v.tolovlar)
+      if (t.amount > 0)
+        hamyonlar.set(t.method, (hamyonlar.get(t.method) ?? 0) + t.amount);
+    for (const [method, amount] of hamyonlar)
+      await postCashReceipt(c, s, id, amount, method, "down");
   } else if (kind === "payments") {
     const v = paymentSchema.parse(input);
     const contract = await c.query(
@@ -84,35 +553,107 @@ async function writeRecord(
       const p = prior.rows[0];
       if (
         p.contract_id !== v.contractId ||
-        Number(p.amount) !== v.amount ||
-        p.method !== v.method
+        p.method !== v.method ||
+        (v.amount !== undefined && Number(p.amount) !== v.amount) ||
+        (v.usdAmount !== undefined &&
+          Number(p.usd_cents) !== minorUnits(v.usdAmount, "cash_usd"))
       )
         throw new Error("Takroriy kalit mos emas");
       return p.id;
     }
-    const sum = await c.query(
-      "SELECT COALESCE(sum(amount),0) paid FROM payments WHERE contract_id=$1 AND voided_at IS NULL",
-      [v.contractId],
-    );
-    assertPayment(
-      v.amount,
-      Number(contract.rows[0].total) -
-        Number(contract.rows[0].down_payment) -
-        Number(sum.rows[0].paid),
-    );
+    // Qarzga sotishda qoldiq dollarda yuritiladi, shuning uchun so'mdagi
+    // to'lovga ham kurs kerak.
+    const qarzTuri = contract.rows[0].kind === "qarz";
+    if (qarzTuri && v.rate === undefined)
+      throw new Error("Qarzga sotuv to‘lovida kurs majburiy");
+    // PAY-02: dollarda olingan to'lov to'lov kursi bilan so'mga
+    // aylantiriladi; shartnoma kursi o'zgarmaydi.
+    const usdCents =
+      v.usdAmount === undefined ? null : minorUnits(v.usdAmount, "cash_usd");
+    const received =
+      usdCents === null
+        ? v.amount!
+        : Math.round((usdCents * v.rate!) / 100);
+    if (!Number.isSafeInteger(received) || received < 1)
+      throw new Error("To‘lov summasi noto‘g‘ri");
+    // PAY-04: qarzdan ortiq summa rad etilmaydi - ortig'i mijoz avansi
+    // bo'ladi. Qarz manfiy ko'rsatilmaydi.
+    let applied: number,
+      appliedCents: number | null = null;
+    if (qarzTuri) {
+      const debtCents = Number(
+        (
+          await c.query(
+            `SELECT ${qarzCentsSql()} qoldiq FROM contracts c WHERE c.id=$1`,
+            [v.contractId],
+          )
+        ).rows[0].qoldiq,
+      );
+      if (debtCents <= 0) throw new Error("Bu shartnomada qarz qolmagan");
+      const t = qarzTolovi({
+        usdCents,
+        received,
+        rate: v.rate!,
+        debtCents,
+      });
+      if (t.cents < 1) throw new Error("To‘lov juda kichik");
+      appliedCents = t.cents;
+      applied = t.som;
+      assertPayment(applied, Math.round((debtCents * v.rate!) / 100));
+    } else {
+      const balance = Number(
+        (
+          await c.query(
+            `SELECT ${qarzSql()} balance FROM contracts c WHERE c.id=$1`,
+            [v.contractId],
+          )
+        ).rows[0].balance,
+      );
+      if (balance <= 0) throw new Error("Bu shartnomada qarz qolmagan");
+      applied = Math.min(received, balance);
+      assertPayment(applied, balance);
+    }
+    const advance = received - applied;
+    // PAY-06: naqdni kassir, P2P/bankni rahbar tasdiqlaydi. Kirituvchining
+    // o'zida shu huquq bo'lsa to'lov darhol hisobga kiradi va tasdiqlovchi
+    // sifatida u yoziladi; bo'lmasa tasdiq kutadi va qarzni kamaytirmaydi.
+    const tasdiq = can(s.role, tasdiqAmal(v.method));
     await c.query(
-      "INSERT INTO payments(id,tenant_id,branch_id,contract_id,amount,method,request_key) VALUES($1,$2,$3,$4,$5,$6,$7)",
+      `INSERT INTO payments(id,tenant_id,branch_id,contract_id,amount,advance_amount,method,request_key,
+ evidence,created_by,status,decided_by,decided_at,usd_cents,rate,applied_cents)
+ VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16)`,
       [
         id,
         s.tenant_id,
         s.branch_id,
         v.contractId,
-        v.amount,
+        applied,
+        advance,
         v.method,
         v.requestKey,
+        v.evidence,
+        s.userId,
+        tasdiq ? "approved" : "pending",
+        tasdiq ? s.userId : null,
+        tasdiq ? new Date() : null,
+        usdCents,
+        usdCents === null && !qarzTuri ? null : v.rate,
+        appliedCents,
       ],
     );
-    await postCashReceipt(c, s, id, v.amount, v.method, "payment");
+    if (tasdiq) {
+      if (advance > 0) await yozAvans(c, s, id, v.contractId, advance);
+      // Kassaga haqiqatda olingan pul o'z hamyonida tushadi: naqd USD
+      // hamyoniga dollar, so'm hamyoniga qarz va avans summasi birgalikda.
+      await postCashReceipt(
+        c,
+        s,
+        id,
+        tushumMinor({ method: v.method, amount: applied, advance_amount: advance, usd_cents: usdCents }),
+        v.method,
+        "payment",
+      );
+    }
   } else throw new Error("Noto‘g‘ri modul");
   await c.query(
     "INSERT INTO audit_events(user_id,tenant_id,branch_id,action,record_id) VALUES($1,$2,$3,$4,$5)",
@@ -128,7 +669,7 @@ export async function readBranch(branchId: string) {
     args,
   );
   const contracts = await db.query(
-    "SELECT c.*, i.model,i.imei,c.total-c.down_payment-COALESCE((SELECT sum(p.amount) FROM payments p WHERE p.contract_id=c.id AND p.voided_at IS NULL),0) balance FROM contracts c JOIN inventory i ON i.id=c.inventory_id AND i.tenant_id=c.tenant_id AND i.branch_id=c.branch_id WHERE c.tenant_id=$1 AND c.branch_id=$2 ORDER BY start_date DESC,c.id",
+    `SELECT c.*, i.model,i.imei,COALESCE((SELECT sum(a.amount-a.used_amount) FROM customer_advances a WHERE a.contract_id=c.id AND a.voided_at IS NULL),0) advance,${qarzSql()} balance FROM contracts c JOIN inventory i ON i.id=c.inventory_id AND i.tenant_id=c.tenant_id AND i.branch_id=c.branch_id WHERE c.tenant_id=$1 AND c.branch_id=$2 ORDER BY start_date DESC,c.id`,
     args,
   );
   return {
@@ -141,5 +682,61 @@ export async function readBranch(branchId: string) {
         args,
       )
     ).rows[0].total,
+    kurs: await kunlikKurs(s.tenant_id),
+    // Yopilgan, lekin nazoratdan chiqarilmagan qurilmalar (taklif 3.2).
+    unreleased: Number(
+      (
+        await db.query(
+          `SELECT count(*) n FROM contracts c WHERE c.tenant_id=$1 AND c.branch_id=$2
+ AND c.control_state IN ('installed','blocked') AND (${qarzSql()})<=0`,
+          args,
+        )
+      ).rows[0].n,
+    ),
+    // Inkassatsiya: undiruvchi qabul qilgan, kassirga topshirilmagan naqd
+    // pul (taklif 3.8). Kassa qoldig'iga kirmaydi.
+    inTransit: (
+      await db.query(
+        `SELECT coalesce(sum(amount+advance_amount),0)::text total,count(*) n
+ FROM payments WHERE tenant_id=$1 AND branch_id=$2 AND status='pending'
+ AND method IN ('cash','cash_usd')`,
+        args,
+      )
+    ).rows[0],
+    // Mijoz avanslari qarzdan alohida yuritiladi (PAY-04).
+    advances: (
+      await db.query(
+        "SELECT coalesce(sum(amount-used_amount),0)::text total FROM customer_advances WHERE tenant_id=$1 AND branch_id=$2 AND voided_at IS NULL",
+        args,
+      )
+    ).rows[0].total,
+  };
+}
+
+/**
+ * Kirim formasidagi tanlov ro'yxatlari: yetkazib beruvchilar va qabul
+ * qiluvchilar. Qabul qiluvchi - ilgari kirim qabul qilgan yoki sotgan
+ * xodim ismlari va shu filialning faol xodimlari (email).
+ */
+export async function kirimRoyxatlari(branchId: string) {
+  const s = await scope(branchId);
+  const [taminotchilar, qabul] = await Promise.all([
+    db.query(`SELECT name FROM suppliers WHERE tenant_id=$1 ORDER BY name`, [
+      s.tenant_id,
+    ]),
+    db.query(
+      `SELECT DISTINCT nom FROM (
+   SELECT btrim(received_by) nom FROM inventory WHERE tenant_id=$1 AND branch_id=$2
+   UNION SELECT btrim(seller) FROM contracts WHERE tenant_id=$1 AND branch_id=$2
+   UNION SELECT btrim(seller) FROM cash_sales WHERE tenant_id=$1 AND branch_id=$2
+   UNION SELECT u.email FROM memberships m JOIN users u ON u.id=m.user_id
+    WHERE m.tenant_id=$1 AND m.branch_id=$2 AND m.role<>'disabled'
+ ) x WHERE nom<>'' ORDER BY nom`,
+      [s.tenant_id, s.branch_id],
+    ),
+  ]);
+  return {
+    taminotchilar: taminotchilar.rows.map((r) => r.name as string),
+    qabulQiluvchilar: qabul.rows.map((r) => r.nom as string),
   };
 }

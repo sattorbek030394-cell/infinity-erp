@@ -1,6 +1,8 @@
 import { dateTime, methodNames, money } from "../../lib/filters";
+import { cashMoney } from "../../lib/cash-domain";
 import type { readPaymentHistory } from "../../lib/history";
 import { PaymentVoid } from "./payment-void";
+import { can } from "../../lib/domain";
 type History = Awaited<ReturnType<typeof readPaymentHistory>>;
 export function PaymentHistory({
   history,
@@ -49,8 +51,23 @@ export function PaymentHistory({
               </td>
               <td>
                 {money(p.amount)}
+                {p.usd_cents ? (
+                  <small>
+                    {cashMoney(p.usd_cents, "cash_usd")} × {money(p.rate)}
+                  </small>
+                ) : null}
+                {Number(p.advance_amount) > 0 ? (
+                  <small>
+                    Avansga: {money(p.advance_amount)} • olingan pul:{" "}
+                    {money(Number(p.amount) + Number(p.advance_amount))}
+                  </small>
+                ) : null}
                 {p.voided_at ? (
                   <small>Bekor qilingan • hisobga kirmaydi</small>
+                ) : p.status === "pending" ? (
+                  <small>Tasdiq kutilmoqda • qarzni kamaytirmaydi</small>
+                ) : p.status === "rejected" ? (
+                  <small>Rad etilgan • hisobga kirmaydi</small>
                 ) : null}
               </td>
               <td>{methodNames[p.method] ?? p.method}</td>
@@ -61,7 +78,15 @@ export function PaymentHistory({
                     <small>Sabab: {p.void_reason}</small>
                     <small>Bekor qilingan vaqt: {dateTime(p.voided_at)}</small>
                   </>
-                ) : history.role === "admin" && p.cash_linked ? (
+                ) : p.status === "rejected" ? (
+                  <small>Rad etish sababi: {p.decided_reason}</small>
+                ) : p.status === "pending" ? (
+                  <small>
+                    {p.method === "cash"
+                      ? "Kassir tasdig‘ini kutmoqda"
+                      : "Rahbar tasdig‘ini kutmoqda"}
+                  </small>
+                ) : can(history.role, "payment.void") && p.cash_linked ? (
                   <PaymentVoid branchId={branchId} paymentId={p.id} />
                 ) : !p.cash_linked ? (
                   <small>Eski yozuv: Kassa bog‘lanishi yo‘q</small>

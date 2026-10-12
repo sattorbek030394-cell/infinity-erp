@@ -2,6 +2,7 @@ import type { readSales } from "../../lib/sales";
 import { dateTime, methodNames, type HistoryFilters } from "../../lib/filters";
 import { cashMoney } from "../../lib/cash-domain";
 import { SaleForm } from "./sale-form";
+import { can } from "../../lib/domain";
 import { SearchForm } from "./search-form";
 export function SalesPanel({
   report,
@@ -31,7 +32,7 @@ export function SalesPanel({
         To‘liq to‘langan qurilmalar savdosi: naqd UZS, karta yoki hisob raqam.
         Qarz yaratilmaydi. Tushumni Kassaga yana qo‘lda yozmang.
       </p>
-      {report.role !== "viewer" ? (
+      {can(report.role, "sale.create") ? (
         <SaleForm branch={branch} items={items} />
       ) : null}
       <SearchForm branchId={branch} tab="sales" filters={filters} status="" />

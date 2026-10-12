@@ -1,6 +1,7 @@
 "use client";
 import { useState } from "react";
 import { useRouter } from "next/navigation";
+import { can } from "../../lib/domain";
 import {
   walletNames,
   cashCategories,
@@ -27,7 +28,7 @@ export function CashForms({
           wallets={unconfigured}
         />
       ) : null}
-      {role !== "viewer" ? (
+      {can(role, "cash.entry") ? (
         <>
           <CashForm
             branch={branch}

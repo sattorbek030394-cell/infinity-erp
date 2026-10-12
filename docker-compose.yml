@@ -1,0 +1,55 @@
+# Sinov muhiti. Ikki yo'l bor.
+#
+# 1) HAMMASI DOCKERDA - Node o'rnatish shart emas:
+#
+#      docker compose up
+#
+#    Birinchi marta 3-5 daqiqa (kutubxonalar yuklanadi), keyin tez.
+#    Brauzerda: http://localhost:3000
+#
+# 2) FAQAT BAZA DOCKERDA, dastur esa o'z mashinangizda (tezroq):
+#
+#      docker compose up -d db
+#      npm ci && npm run migrate && npm run seed && npm run dev
+#
+#    .env.local ichiga:
+#      DATABASE_URL=postgres://infinity:infinity@localhost:5433/infinity
+#
+# Port 5433 ataylab: mashinada boshqa Postgres ishlab turgan bo'lsa
+# urishmaydi. To'xtatish: Ctrl+C, so'ng docker compose down.
+# Ma'lumotni ham o'chirish: docker compose down -v
+services:
+  db:
+    image: postgres:17
+    container_name: infinity-db
+    environment:
+      POSTGRES_USER: infinity
+      POSTGRES_PASSWORD: infinity
+      POSTGRES_DB: infinity
+    ports:
+      - "5433:5432"
+    volumes:
+      - infinity-pgdata:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U infinity -d infinity"]
+      interval: 5s
+      timeout: 5s
+      retries: 10
+
+  app:
+    build: .
+    container_name: infinity-app
+    depends_on:
+      db:
+        condition: service_healthy
+    environment:
+      DATABASE_URL: postgres://infinity:infinity@db:5432/infinity
+      APP_ORIGIN: http://localhost:3000
+      # Sinov paroli. Haqiqiy ishga o'tkazishdan oldin almashtiring.
+      DEMO_PASSWORD: ${DEMO_PASSWORD:-InfinityTest2026}
+      SECOND_BRANCH_NAME: Ikkinchi filial
+    ports:
+      - "3000:3000"
+
+volumes:
+  infinity-pgdata:

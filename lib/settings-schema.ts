@@ -1,5 +1,8 @@
 import { z } from "zod";
-export const staffRole = z.enum(["admin", "cashier", "viewer"]);
+import { ROLLAR } from "./domain";
+// Rol nomlari `lib/domain.ts` dagi ROLLAR bilan bir xil bo'lsin: bazadagi
+// CHECK ham shu nomlarni qabul qiladi.
+export const staffRole = z.enum(ROLLAR);
 const branch = { branchId: z.uuid() };
 export const settingsSchema = z.discriminatedUnion("action", [
   z
@@ -29,12 +32,30 @@ export const settingsSchema = z.discriminatedUnion("action", [
       role: staffRole,
     })
     .strict(),
+  // Narx va bonus sozlamalari (TZ SALE). Nol - o'chirilgan.
+  z
+    .object({
+      ...branch,
+      action: z.literal("narx"),
+      // Ekranda foiz, bazada bazis punkt: 15% -> 1500.
+      minMarginPct: z.coerce
+        .number()
+        .min(0)
+        .max(100)
+        .transform((v) => Math.round(v * 100)),
+      sellerBonusPct: z.coerce
+        .number()
+        .min(0)
+        .max(100)
+        .transform((v) => Math.round(v * 100)),
+    })
+    .strict(),
   z
     .object({
       ...branch,
       action: z.literal("role"),
       userId: z.uuid(),
-      role: z.enum(["admin", "cashier", "viewer", "disabled"]),
+      role: z.enum([...ROLLAR, "disabled"]),
     })
     .strict(),
 ]);

@@ -14,6 +14,7 @@ const tenant = randomUUID(),
   b3 = randomUUID(),
   admin = randomUUID(),
   viewer = randomUUID(),
+  kassir = randomUUID(),
   outsider = randomUUID();
 const pool = new Pool({ connectionString: connection });
 let server: ChildProcess | undefined;
@@ -31,6 +32,31 @@ async function login(email: string) {
   assert.equal(r.status, 303);
   return r.headers.get("set-cookie")!.split(";")[0];
 }
+/**
+ * Kirimda endi ko'p maydon majburiy (030 migratsiya). Eski testlar faqat
+ * IMEI, model va so'mdagi tannarxni yuboradi - ularni to'liq kirimga
+ * to'ldiramiz: so'mdagi tannarx 1 kurs bilan dollar sifatida, to'lov turi
+ * sukut bo'yicha "qarzga" (kassaga ta'sir qilmaydi).
+ */
+function kirim(data: unknown) {
+  if (!data || typeof data !== "object") return data;
+  const d: Record<string, unknown> = { ...(data as Record<string, unknown>) };
+  if (d.cost !== undefined && d.costUsd === undefined) {
+    d.costUsd = String(d.cost);
+    d.costRate = 1;
+  }
+  delete d.cost;
+  return {
+    condition: "Yangi",
+    purchaseDate: "2026-01-01",
+    simType: "Dual",
+    expectedPriceUsd: d.costUsd,
+    supplier: "SYNTHETIC kirim",
+    receivedBy: "SYNTHETIC qabul",
+    purchaseMethod: "debt",
+    ...d,
+  };
+}
 async function post(
   kind: string,
   data: unknown,
@@ -38,6 +64,7 @@ async function post(
   auth = cookie,
   source = origin,
 ) {
+  if (kind === "inventory") data = kirim(data);
   return fetch(origin + "/api/records", {
     method: "POST",
     headers: {
@@ -64,6 +91,7 @@ before(async () => {
   for (const [id, label] of [
     [admin, "admin"],
     [viewer, "viewer"],
+    [kassir, "kassir"],
     [outsider, "outsider"],
   ])
     await pool.query("INSERT INTO users VALUES($1,$2,$3)", [
@@ -72,9 +100,11 @@ before(async () => {
       passwordHash,
     ]);
   await pool.query(
-    "INSERT INTO memberships VALUES($1,$2,$3,'admin'),($1,$2,$4,'admin'),($5,$2,$3,'viewer'),($6,$7,$8,'admin')",
-    [admin, tenant, b1, b2, viewer, outsider, otherTenant, b3],
+    "INSERT INTO memberships VALUES($1,$2,$3,'admin'),($1,$2,$4,'admin'),($5,$2,$3,'viewer'),($6,$7,$8,'admin'),($9,$2,$3,'cashier')",
+    [admin, tenant, b1, b2, viewer, outsider, otherTenant, b3, kassir],
   );
+  // Kassir PAY-06 sinovlari uchun: naqdni tasdiqlaydi, P2P/bankni yo'q.
+  extraUsers.push(kassir);
   server = spawn(
     process.execPath,
     ["node_modules/next/dist/bin/next", "start", "-p", "3100"],
@@ -107,20 +137,43 @@ before(async () => {
 after(async () => {
   server?.kill();
   if (connection) {
+    // Tartib muhim: bola jadval ota jadvaldan oldin o'chadi.
     for (const table of [
       "audit_events",
+      "profit_snapshots",
+      "investor_shares",
+      "investor_months",
+      "investor_entries",
       "cash_entries",
+      "monthly_targets",
+      "cash_closing_lines",
+      "cash_closings",
+      "supplier_settlements",
+      "supplier_obligations",
+      "device_controls",
+      "contract_closures",
+      "customer_advances",
       "payments",
       "cash_sales",
       "cash_operations",
       "cash_wallets",
       "installments",
       "contracts",
+      "customers",
       "inventory",
+      "investors",
+      "suppliers",
+      "exchange_rates",
       "memberships",
+      "nasiya_settings",
       "branches",
     ]) {
-      if (table === "installments")
+      if (table === "cash_closing_lines")
+        await pool.query(
+          "DELETE FROM cash_closing_lines WHERE closing_id IN (SELECT id FROM cash_closings WHERE tenant_id IN ($1,$2))",
+          [tenant, otherTenant],
+        );
+      else if (table === "installments")
         await pool.query(
           "DELETE FROM installments WHERE contract_id IN (SELECT id FROM contracts WHERE tenant_id IN ($1,$2))",
           [tenant, otherTenant],
@@ -275,11 +328,27 @@ test(
       ),
       1,
     );
+    // Parallel ikki to'lov: ikkisi ham qoplanadi, lekin biror so'm
+    // yo'qolmaydi yoki ikki marta sanalmaydi (qarz 700 edi).
     const raced = await Promise.all([
-      post("payments", { ...payment, amount: 500, requestKey: randomUUID() }),
-      post("payments", { ...payment, amount: 500, requestKey: randomUUID() }),
+      post("payments", { ...payment, amount: 250, requestKey: randomUUID() }),
+      post("payments", { ...payment, amount: 250, requestKey: randomUUID() }),
     ]);
-    assert.deepEqual(raced.map((r) => r.status).sort(), [200, 400]);
+    assert.deepEqual(raced.map((r) => r.status).sort(), [200, 200]);
+    assert.equal(
+      Number(
+        (
+          await pool.query(
+            `SELECT c.total-c.down_payment-COALESCE((SELECT sum(p.amount) FROM payments p
+ WHERE p.contract_id=c.id AND p.status='approved' AND p.voided_at IS NULL),0) balance
+ FROM contracts c WHERE c.id=$1`,
+            [contract],
+          )
+        ).rows[0].balance,
+      ),
+      200,
+      "parallel to'lovlar aniq qo'shiladi",
+    );
     const view = await fetch(origin + "/erp?branch=" + b2 + "&tab=inventory", {
       headers: { cookie },
     });
@@ -291,21 +360,36 @@ test(
       { headers: { cookie: outsiderCookie } },
     );
     assert.ok(!(await forbidden.text()).includes(input.imei));
+    // Har bir bo'lim ochilishi shart. Ilgari ro'yxatda beshtasi bor edi,
+    // shuning uchun Foyda va Investorlar ekranidagi SQL xatosi (parametr
+    // turi aniqlanmadi) CI dan o'tib ketgan - faqat brauzerda ko'rindi.
     for (const tab of [
       "dashboard",
       "inventory",
       "contracts",
+      "qarz",
       "payments",
+      "approvals",
+      "closures",
       "arrears",
-    ])
-      assert.equal(
-        (
-          await fetch(origin + "/erp?branch=" + b1 + "&tab=" + tab, {
-            headers: { cookie },
-          })
-        ).status,
-        200,
+      "cash",
+      "sales",
+      "suppliers",
+      "profit",
+      "investors",
+    ]) {
+      const page = await fetch(origin + "/erp?branch=" + b1 + "&tab=" + tab, {
+        headers: { cookie },
+      });
+      assert.equal(page.status, 200, tab + " ochilmadi");
+      // money(undefined) ekranga "son emas" deb chiqadi. SQL ustun nomi
+      // camelCase bo'lsa Postgres uni kichik harfga aylantiradi va maydon
+      // undefined bo'lib qoladi - aynan shunday xato Foyda ekranida bor edi.
+      assert.ok(
+        !(await page.text()).includes("son emas"),
+        tab + " ekranida son emas (NaN) ko‘rsatkich bor",
       );
+    }
     const get = async (path: string, auth = cookie) => {
       const r = await fetch(origin + path, { headers: { cookie: auth } });
       assert.equal(r.status, 200);
@@ -1472,6 +1556,2798 @@ test(
     assert.equal(
       (await post("inventory", { ...input, imei: "222222222222222" })).status,
       400,
+    );
+  },
+);
+
+test(
+  "HTTP: ustama hisobi, mijoz kartochkasi va chop etiladigan shartnoma",
+  { skip: !connection },
+  async () => {
+    const auth = await login(admin + "@example.invalid");
+    const device = async (imei: string) =>
+      (
+        await (
+          await post(
+            "inventory",
+            { imei, model: "SYNTHETIC nasiya phone", cost: 9_000_000 },
+            b1,
+            auth,
+          )
+        ).json()
+      ).id as string;
+    const pnfl = "5" + String(Date.now()).slice(-13);
+    const terms = {
+      inventoryId: await device("333333333333333"),
+      customerName: "SYNTHETIC Mijoz Testovich",
+      pnfl,
+      passport: "AD1234567",
+      passportIssuer: "SYNTHETIC IIB",
+      passportDate: "2021-03-12",
+      birthDate: "1994-03-04",
+      phone1: "+998 90 000 00 00",
+      phone2: "",
+      address: "SYNTHETIC manzil",
+      icloudAccount: "",
+      icloudPhone: "",
+      priceUzs: 17_028_900,
+      downPayment: 3_570_000,
+      months: 6,
+      monthlyRateBp: 500,
+      startDate: "2026-09-25",
+    };
+    const created = await post("contracts", terms, b1, auth);
+    assert.equal(created.status, 200);
+    const contract = (await created.json()).id;
+    const row = (
+      await pool.query("SELECT * FROM contracts WHERE id=$1", [contract])
+    ).rows[0];
+    // 13 458 900 * 5% * 6 oy = 4 037 670
+    assert.equal(Number(row.principal), 13_458_900);
+    assert.equal(Number(row.markup), 4_037_670);
+    assert.equal(Number(row.total), 3_570_000 + 13_458_900 + 4_037_670);
+    assert.equal(Number(row.monthly_rate_bp), 500);
+    assert.ok(Number(row.number) >= 1, "shartnomaga raqam berildi");
+    assert.ok(row.customer_id, "mijoz kartochkasi ulandi");
+    assert.equal(
+      Number(
+        (
+          await pool.query(
+            "SELECT sum(amount) jami FROM installments WHERE contract_id=$1",
+            [contract],
+          )
+        ).rows[0].jami,
+      ),
+      13_458_900 + 4_037_670,
+      "jadval asosiy qarz va ustamani to‘liq qoplaydi",
+    );
+    const customer = (
+      await pool.query("SELECT * FROM customers WHERE id=$1", [row.customer_id])
+    ).rows[0];
+    assert.equal(customer.full_name, "SYNTHETIC Mijoz Testovich");
+    assert.equal(customer.passport_issuer, "SYNTHETIC IIB");
+    assert.equal(customer.phone2, "", "bo‘sh maydon xato bermaydi");
+
+    // Hisob kelishmasa saqlanmaydi, jim tuzatilmaydi.
+    assert.equal(
+      (
+        await post(
+          "contracts",
+          {
+            ...terms,
+            inventoryId: await device("344444444444444"),
+            total: 1_000_000,
+          },
+          b1,
+          auth,
+        )
+      ).status,
+      400,
+    );
+    // PNFL bir xil bo'lsa ikkinchi shartnoma o'sha mijozga yoziladi.
+    const second = await post(
+      "contracts",
+      {
+        ...terms,
+        inventoryId: await device("355555555555555"),
+        phone2: "+998 91 111 11 11",
+        priceUzs: 9_000_000,
+        downPayment: 1_000_000,
+        months: 3,
+      },
+      b1,
+      auth,
+    );
+    assert.equal(second.status, 200);
+    const secondRow = (
+      await pool.query("SELECT * FROM contracts WHERE id=$1", [
+        (await second.json()).id,
+      ])
+    ).rows[0];
+    assert.equal(secondRow.customer_id, row.customer_id);
+    assert.equal(Number(secondRow.number), Number(row.number) + 1);
+    assert.equal(
+      (
+        await pool.query("SELECT phone2 FROM customers WHERE id=$1", [
+          row.customer_id,
+        ])
+      ).rows[0].phone2,
+      "+998 91 111 11 11",
+      "yangi ma'lumot qo‘shiladi",
+    );
+
+    const print = (id: string, auth?: string) =>
+      fetch(origin + "/erp/contracts/" + id + "/shartnoma?branch=" + b1, {
+        headers: auth ? { cookie: auth } : {},
+      });
+    const printed = await print(contract, auth);
+    assert.equal(printed.status, 200);
+    const html = await printed.text();
+    for (const kerak of [
+      row.number + " - сонли",
+      "SYNTHETIC Mijoz Testovich",
+      pnfl,
+      "333333333333333",
+      "12.03.2021",
+      "1-илова",
+    ])
+      assert.ok(html.includes(kerak), "shartnomada yo‘q: " + kerak);
+    assert.doesNotMatch(html, /\{\{|undefined|NaN/);
+    assert.equal(
+      (await print(contract, await login(viewer + "@example.invalid"))).status,
+      200,
+      "viewer shartnomani ko‘ra oladi",
+    );
+    assert.equal(
+      (await print(contract, await login(outsider + "@example.invalid")))
+        .status,
+      403,
+    );
+    assert.equal((await print(contract)).status, 403);
+    assert.equal((await print(randomUUID(), auth)).status, 404);
+  },
+);
+
+test(
+  "HTTP: PAY-06 to'lovni rol bo'yicha tasdiqlash",
+  { skip: !connection },
+  async () => {
+    const auth = await login(admin + "@example.invalid");
+    const kassirAuth = await login(kassir + "@example.invalid");
+    const koruvchi = await login(viewer + "@example.invalid");
+    const begona = await login(outsider + "@example.invalid");
+    const item = (
+      await (
+        await post(
+          "inventory",
+          { imei: "366666666666666", model: "SYNTHETIC PAY-06", cost: 5_000_000 },
+          b1,
+          auth,
+        )
+      ).json()
+    ).id;
+    const contract = (
+      await (
+        await post(
+          "contracts",
+          {
+            inventoryId: item,
+            customerName: "SYNTHETIC PAY-06 mijoz",
+            priceUzs: 9_000_000,
+            downPayment: 1_000_000,
+            months: 4,
+            monthlyRateBp: 500,
+            startDate: "2026-09-25",
+          },
+          b1,
+          auth,
+        )
+      ).json()
+    ).id;
+    // 8 000 000 asosiy qarz + 1 600 000 ustama
+    const qarz = async () =>
+      Number(
+        (
+          await pool.query(
+            `SELECT c.total-c.down_payment-COALESCE((SELECT sum(p.amount) FROM payments p
+ WHERE p.contract_id=c.id AND p.status='approved' AND p.voided_at IS NULL),0) balance
+ FROM contracts c WHERE c.id=$1`,
+            [contract],
+          )
+        ).rows[0].balance,
+      );
+    const hamyon = async (wallet: string) =>
+      Number(
+        (
+          await pool.query(
+            "SELECT COALESCE(sum(amount_minor),0) n FROM cash_entries WHERE branch_id=$1 AND wallet=$2",
+            [b1, wallet],
+          )
+        ).rows[0].n,
+      );
+    assert.equal(await qarz(), 9_600_000);
+
+    // Kassir naqd qabul qiladi: o'zi javobgar, darhol hisobga kiradi (AT-25).
+    const naqdBefore = await hamyon("cash_uzs");
+    const naqd = await post(
+      "payments",
+      {
+        contractId: contract,
+        amount: 600_000,
+        method: "cash",
+        requestKey: randomUUID(),
+      },
+      b1,
+      kassirAuth,
+    );
+    assert.equal(naqd.status, 200);
+    assert.equal(await qarz(), 9_000_000);
+    assert.equal(await hamyon("cash_uzs"), naqdBefore + 600_000);
+
+    // Karta tushumi: kassir kiritadi, lekin tasdiqlay olmaydi (AT-23).
+    const kartaBefore = await hamyon("card_uzs");
+    const karta = (
+      await (
+        await post(
+          "payments",
+          {
+            contractId: contract,
+            amount: 1_000_000,
+            method: "card",
+            evidence: "SYNTHETIC P2P 12345",
+            requestKey: randomUUID(),
+          },
+          b1,
+          kassirAuth,
+        )
+      ).json()
+    ).id;
+    assert.equal(
+      (await pool.query("SELECT status FROM payments WHERE id=$1", [karta]))
+        .rows[0].status,
+      "pending",
+    );
+    assert.equal(await qarz(), 9_000_000, "tasdiqsiz summa qarzni kamaytirmaydi");
+    assert.equal(await hamyon("card_uzs"), kartaBefore, "hamyonga ham kirmaydi");
+
+    const decide = (body: Record<string, unknown>, cookie = auth) =>
+      fetch(origin + "/api/payments/approve", {
+        method: "POST",
+        headers: { cookie, origin, "content-type": "application/json" },
+        body: JSON.stringify({ branchId: b1, ...body }),
+      });
+    // AT-24: kassir P2Pni tasdiqlashga urinadi - server rad etadi.
+    assert.equal(
+      (await decide({ paymentId: karta, decision: "approve" }, kassirAuth))
+        .status,
+      403,
+    );
+    assert.equal(await qarz(), 9_000_000);
+    // Boshqa filial va tashqi foydalanuvchi ham tegmaydi.
+    assert.equal(
+      (await decide({ paymentId: karta, decision: "approve" }, begona)).status,
+      403,
+    );
+
+    // Rahbar tasdiqlaydi: qarz kamayadi va karta hamyoniga kirim tushadi.
+    assert.equal((await decide({ paymentId: karta, decision: "approve" })).status, 200);
+    assert.equal(await qarz(), 8_000_000);
+    assert.equal(await hamyon("card_uzs"), kartaBefore + 1_000_000);
+    const tasdiq = (
+      await pool.query(
+        "SELECT status,decided_by,decided_at,created_by FROM payments WHERE id=$1",
+        [karta],
+      )
+    ).rows[0];
+    assert.equal(tasdiq.status, "approved");
+    assert.equal(tasdiq.decided_by, admin, "tasdiqlovchi saqlanadi");
+    assert.equal(tasdiq.created_by, kassir, "kirituvchi saqlanadi");
+    assert.ok(tasdiq.decided_at);
+    // Takroriy tasdiq ikkinchi marta pul yaratmaydi.
+    assert.equal((await decide({ paymentId: karta, decision: "approve" })).status, 200);
+    assert.equal(await hamyon("card_uzs"), kartaBefore + 1_000_000);
+    assert.equal(
+      (await decide({ paymentId: karta, decision: "reject", reason: "boshqa qaror" }))
+        .status,
+      400,
+      "tasdiqlangandan keyin rad etib bo'lmaydi",
+    );
+
+    // AT-27: rahbar rad etadi - sabab majburiy, pul va qarz o'zgarmaydi.
+    const rad = (
+      await (
+        await post(
+          "payments",
+          {
+            contractId: contract,
+            amount: 500_000,
+            method: "transfer",
+            requestKey: randomUUID(),
+          },
+          b1,
+          kassirAuth,
+        )
+      ).json()
+    ).id;
+    const bankBefore = await hamyon("bank_uzs");
+    assert.equal((await decide({ paymentId: rad, decision: "reject" })).status, 400);
+    assert.equal(
+      (await decide({ paymentId: rad, decision: "reject", reason: "qisq" })).status,
+      400,
+    );
+    assert.equal(
+      (
+        await decide({
+          paymentId: rad,
+          decision: "reject",
+          reason: "Bankda tushum ko'rinmadi",
+        })
+      ).status,
+      200,
+    );
+    assert.equal(await qarz(), 8_000_000);
+    assert.equal(await hamyon("bank_uzs"), bankBefore);
+    assert.equal(
+      (await pool.query("SELECT decided_reason FROM payments WHERE id=$1", [rad]))
+        .rows[0].decided_reason,
+      "Bankda tushum ko'rinmadi",
+    );
+
+    // Tasdiq kutayotgan tushum bekor qilinmaydi - rad etiladi.
+    const kutayotgan = (
+      await (
+        await post(
+          "payments",
+          {
+            contractId: contract,
+            amount: 300_000,
+            method: "card",
+            requestKey: randomUUID(),
+          },
+          b1,
+          kassirAuth,
+        )
+      ).json()
+    ).id;
+    const bekor = await fetch(origin + "/api/payments/void", {
+      method: "POST",
+      headers: { cookie: auth, origin, "content-type": "application/json" },
+      body: JSON.stringify({
+        branchId: b1,
+        paymentId: kutayotgan,
+        requestKey: randomUUID(),
+        reason: "SYNTHETIC void attempt",
+      }),
+    });
+    assert.equal(bekor.status, 400);
+
+    // Tasdiq ekranida faqat o'z usuli ko'rinadi.
+    const ekran = async (cookie: string) =>
+      await (
+        await fetch(origin + "/erp?branch=" + b1 + "&tab=approvals", {
+          headers: { cookie },
+        })
+      ).text();
+    const rahbarEkran = await ekran(auth);
+    assert.ok(rahbarEkran.includes("SYNTHETIC PAY-06 mijoz"));
+    assert.ok(
+      (await ekran(koruvchi)).includes("tasdiqlash huquqi yo‘q"),
+      "ko'ruvchiga tasdiqlash ro'yxati ko'rsatilmaydi",
+    );
+  },
+);
+
+test(
+  "HTTP: PAY-04 qarzdan ortiq tushum mijoz avansi bo'ladi",
+  { skip: !connection },
+  async () => {
+    const auth = await login(admin + "@example.invalid");
+    const device = async (imei: string) =>
+      (
+        await (
+          await post(
+            "inventory",
+            { imei, model: "SYNTHETIC AVANS", cost: 1_000_000 },
+            b1,
+            auth,
+          )
+        ).json()
+      ).id as string;
+    const shartnoma = async (imei: string) =>
+      (
+        await (
+          await post(
+            "contracts",
+            {
+              inventoryId: await device(imei),
+              customerLabel: "SYNTHETIC AVANS",
+              total: 1_000_000,
+              downPayment: 200_000,
+              months: 2,
+              startDate: "2026-09-25",
+            },
+            b1,
+            auth,
+          )
+        ).json()
+      ).id as string;
+    const holat = async (id: string) =>
+      (
+        await pool.query(
+          `SELECT c.total-c.down_payment-COALESCE((SELECT sum(p.amount) FROM payments p
+ WHERE p.contract_id=c.id AND p.status='approved' AND p.voided_at IS NULL),0) balance,
+ COALESCE((SELECT sum(a.amount) FROM customer_advances a
+   WHERE a.contract_id=c.id AND a.voided_at IS NULL),0) avans
+ FROM contracts c WHERE c.id=$1`,
+          [id],
+        )
+      ).rows[0];
+    const pay = (contractId: string, amount: number, extra = {}) =>
+      post(
+        "payments",
+        { contractId, amount, method: "cash", requestKey: randomUUID(), ...extra },
+        b1,
+        auth,
+      );
+
+    // AT-11: qarz 800 000, mijoz 1 000 000 beradi.
+    const bitta = await shartnoma("411111111111111");
+    assert.equal((await pay(bitta, 1_000_000)).status, 200);
+    let n = await holat(bitta);
+    assert.equal(Number(n.balance), 0, "qarz manfiy bo'lmaydi");
+    assert.equal(Number(n.avans), 200_000, "ortig'i avansga tushadi");
+    // Kassaga haqiqatda olingan pul tushadi: qarzga 800 000 ketgan bo'lsa
+    // ham to'lov yozuvi 1 000 000.
+    assert.equal(
+      Number(
+        (
+          await pool.query(
+            `SELECT COALESCE(sum(e.amount_minor),0) n FROM cash_entries e
+ WHERE e.payment_id IN (SELECT id FROM payments WHERE contract_id=$1)`,
+            [bitta],
+          )
+        ).rows[0].n,
+      ),
+      1_000_000,
+    );
+    // Qarzi yopilgan shartnomaga yangi to'lov kiritilmaydi.
+    assert.equal((await pay(bitta, 1000)).status, 400);
+
+    // Parallel ikki to'lov qarzdan oshsa: ikkisi ham qabul qilinadi,
+    // qarz aniq nolga tushadi, ortig'i avansda.
+    const ikki = await shartnoma("422222222222222");
+    const parallel = await Promise.all([pay(ikki, 500_000), pay(ikki, 500_000)]);
+    assert.deepEqual(parallel.map((r) => r.status).sort(), [200, 200]);
+    n = await holat(ikki);
+    assert.equal(Number(n.balance), 0);
+    assert.equal(Number(n.avans), 200_000);
+
+    // Tasdiq kutayotgan to'lovda taqsimot tasdiq paytida hisoblanadi:
+    // kutish davomida qarz naqd to'lov bilan yopilsa, hamma pul avansga
+    // tushadi va qarz manfiy bo'lmaydi.
+    const kassirAuth = await login(kassir + "@example.invalid");
+    const uch = await shartnoma("433333333333333");
+    const kutayotgan = (
+      await (
+        await post(
+          "payments",
+          {
+            contractId: uch,
+            amount: 800_000,
+            method: "card",
+            requestKey: randomUUID(),
+          },
+          b1,
+          kassirAuth,
+        )
+      ).json()
+    ).id;
+    assert.equal(Number((await holat(uch)).balance), 800_000);
+    assert.equal((await pay(uch, 800_000)).status, 200);
+    assert.equal(Number((await holat(uch)).balance), 0);
+    const qaror = await fetch(origin + "/api/payments/approve", {
+      method: "POST",
+      headers: { cookie: auth, origin, "content-type": "application/json" },
+      body: JSON.stringify({
+        branchId: b1,
+        paymentId: kutayotgan,
+        decision: "approve",
+      }),
+    });
+    assert.equal(qaror.status, 200);
+    n = await holat(uch);
+    assert.equal(Number(n.balance), 0, "qarz manfiy bo'lmaydi");
+    assert.equal(Number(n.avans), 800_000, "hammasi avansga tushadi");
+    assert.equal(
+      Number(
+        (
+          await pool.query(
+            "SELECT amount,advance_amount FROM payments WHERE id=$1",
+            [kutayotgan],
+          )
+        ).rows[0].amount,
+      ),
+      0,
+    );
+    // Shunday to'lovni bekor qilganda avans ham amaldan chiqadi.
+    assert.equal(
+      (
+        await fetch(origin + "/api/payments/void", {
+          method: "POST",
+          headers: { cookie: auth, origin, "content-type": "application/json" },
+          body: JSON.stringify({
+            branchId: b1,
+            paymentId: kutayotgan,
+            requestKey: randomUUID(),
+            reason: "SYNTHETIC avans bekor",
+          }),
+        })
+      ).status,
+      200,
+    );
+    n = await holat(uch);
+    assert.equal(Number(n.avans), 0, "bekor qilinganda avans ham chiqadi");
+    assert.equal(Number(n.balance), 0);
+  },
+);
+
+test(
+  "HTTP: PAY-02 dollardagi to'lov kurs bilan so'mga aylanadi",
+  { skip: !connection },
+  async () => {
+    const auth = await login(admin + "@example.invalid");
+    const item = (
+      await (
+        await post(
+          "inventory",
+          { imei: "455555555555555", model: "SYNTHETIC USD", cost: 5_000_000 },
+          b1,
+          auth,
+        )
+      ).json()
+    ).id;
+    const contract = (
+      await (
+        await post(
+          "contracts",
+          {
+            inventoryId: item,
+            customerLabel: "SYNTHETIC USD mijoz",
+            total: 20_000_000,
+            downPayment: 0,
+            months: 4,
+            startDate: "2026-09-25",
+          },
+          b1,
+          auth,
+        )
+      ).json()
+    ).id;
+    const pay = (body: Record<string, unknown>) =>
+      post(
+        "payments",
+        { contractId: contract, requestKey: randomUUID(), ...body },
+        b1,
+        auth,
+      );
+    // AT-10: kursi yo'q USD to'lov saqlanmaydi.
+    assert.equal(
+      (await pay({ method: "cash_usd", usdAmount: "100.50" })).status,
+      400,
+    );
+    assert.equal((await pay({ method: "cash_usd", rate: 12_800 })).status, 400);
+
+    const usdBefore = Number(
+      (
+        await pool.query(
+          "SELECT COALESCE(sum(amount_minor),0) n FROM cash_entries WHERE branch_id=$1 AND wallet='cash_usd'",
+          [b1],
+        )
+      ).rows[0].n,
+    );
+    const tolov = await pay({
+      method: "cash_usd",
+      usdAmount: "100.50",
+      rate: 12_800,
+    });
+    assert.equal(tolov.status, 200);
+    const id = (await tolov.json()).id;
+    const row = (await pool.query("SELECT * FROM payments WHERE id=$1", [id]))
+      .rows[0];
+    // 100.50 USD * 12 800 = 1 286 400 so'm
+    assert.equal(Number(row.amount), 1_286_400);
+    assert.equal(Number(row.usd_cents), 10_050);
+    assert.equal(Number(row.rate), 12_800);
+    assert.equal(row.status, "approved");
+    // Naqd USD hamyoniga dollar tushadi, so'm emas.
+    assert.equal(
+      Number(
+        (
+          await pool.query(
+            "SELECT COALESCE(sum(amount_minor),0) n FROM cash_entries WHERE branch_id=$1 AND wallet='cash_usd'",
+            [b1],
+          )
+        ).rows[0].n,
+      ),
+      usdBefore + 10_050,
+    );
+    // Qarz so'mda kamayadi.
+    assert.equal(
+      Number(
+        (
+          await pool.query(
+            `SELECT c.total-c.down_payment-COALESCE((SELECT sum(p.amount) FROM payments p
+ WHERE p.contract_id=c.id AND p.status='approved' AND p.voided_at IS NULL),0) balance
+ FROM contracts c WHERE c.id=$1`,
+            [contract],
+          )
+        ).rows[0].balance,
+      ),
+      20_000_000 - 1_286_400,
+    );
+    // Bekor qilishda dollar hamyondan chiqadi.
+    assert.equal(
+      (
+        await fetch(origin + "/api/payments/void", {
+          method: "POST",
+          headers: { cookie: auth, origin, "content-type": "application/json" },
+          body: JSON.stringify({
+            branchId: b1,
+            paymentId: id,
+            requestKey: randomUUID(),
+            reason: "SYNTHETIC usd bekor",
+          }),
+        })
+      ).status,
+      200,
+    );
+    assert.equal(
+      Number(
+        (
+          await pool.query(
+            "SELECT COALESCE(sum(amount_minor),0) n FROM cash_entries WHERE branch_id=$1 AND wallet='cash_usd'",
+            [b1],
+          )
+        ).rows[0].n,
+      ),
+      usdBefore,
+    );
+  },
+);
+
+test(
+  "HTTP: PAY-07/08/09 muddatidan oldin yopish",
+  { skip: !connection },
+  async () => {
+    const auth = await login(admin + "@example.invalid");
+    const kassirAuth = await login(kassir + "@example.invalid");
+    // Shartnoma sanasi: bugundan 70 kun oldin - aynan 2 to'liq oy o'tadi.
+    const boshlanish = (
+      await pool.query(
+        "SELECT ((now() AT TIME ZONE 'Asia/Tashkent')::date - 70)::text d",
+      )
+    ).rows[0].d;
+    const item = (
+      await (
+        await post(
+          "inventory",
+          { imei: "466666666666666", model: "SYNTHETIC YOPISH", cost: 9_000_000 },
+          b1,
+          auth,
+        )
+      ).json()
+    ).id;
+    // TZ 11.1: D = 8 400 000, M = 2 520 000, oylik 1 820 000.
+    const contract = (
+      await (
+        await post(
+          "contracts",
+          {
+            inventoryId: item,
+            customerName: "SYNTHETIC YOPISH mijoz",
+            priceUzs: 12_000_000,
+            downPayment: 3_600_000,
+            months: 6,
+            monthlyRateBp: 500,
+            startDate: boshlanish,
+          },
+          b1,
+          auth,
+        )
+      ).json()
+    ).id;
+    const qarz = async () =>
+      Number(
+        (
+          await pool.query(
+            `SELECT c.total-c.down_payment
+ -COALESCE((SELECT sum(p.amount) FROM payments p WHERE p.contract_id=c.id AND p.status='approved' AND p.voided_at IS NULL),0)
+ -COALESCE((SELECT sum(x.markup_cancelled) FROM contract_closures x WHERE x.contract_id=c.id AND x.status='completed'),0) balance
+ FROM contracts c WHERE c.id=$1`,
+            [contract],
+          )
+        ).rows[0].balance,
+      );
+    const pay = (amount: number, method = "cash", cookie = auth) =>
+      post(
+        "payments",
+        { contractId: contract, amount, method, requestKey: randomUUID() },
+        b1,
+        cookie,
+      );
+    const yopish = (action: string, cookie = auth) =>
+      fetch(origin + "/api/closures", {
+        method: "POST",
+        headers: { cookie, origin, "content-type": "application/json" },
+        body: JSON.stringify({ branchId: b1, contractId: contract, action }),
+      });
+
+    assert.equal(await qarz(), 10_920_000);
+    for (let i = 0; i < 2; i++) assert.equal((await pay(1_820_000)).status, 200);
+    assert.equal(await qarz(), 7_280_000);
+
+    // AT-28: hisob - 1 680 000 ustama bekor, yopish summasi 5 600 000.
+    const hisob = await yopish("quote");
+    assert.equal(hisob.status, 200);
+    const h = await hisob.json();
+    assert.equal(h.kind, "early");
+    assert.equal(h.periods, 2);
+    assert.equal(h.markupCancelled, 1_680_000);
+    assert.equal(h.closeAmount, 5_600_000);
+    assert.equal(h.markupKept, 840_000);
+    // Hisobning o'zi qarzni o'zgartirmaydi.
+    assert.equal(await qarz(), 7_280_000);
+    // To'lamasdan yakunlab bo'lmaydi.
+    const erta = await yopish("complete");
+    assert.equal(erta.status, 400);
+    assert.ok((await erta.json()).error.includes("5 600 000"));
+
+    assert.equal((await pay(5_600_000)).status, 200);
+    assert.equal(await qarz(), 1_680_000);
+
+    // AT-29: tasdiq kutayotgan tushum bo'lsa yopilmaydi.
+    const kutayotgan = (
+      await (await pay(100_000, "card", kassirAuth)).json()
+    ).id;
+    const bloklangan = await yopish("complete");
+    assert.equal(bloklangan.status, 400);
+    assert.ok((await bloklangan.json()).error.includes("Tasdiq kutayotgan"));
+    assert.equal(
+      (
+        await fetch(origin + "/api/payments/approve", {
+          method: "POST",
+          headers: { cookie: auth, origin, "content-type": "application/json" },
+          body: JSON.stringify({
+            branchId: b1,
+            paymentId: kutayotgan,
+            decision: "reject",
+            reason: "Yopish hisobidan ortiqcha",
+          }),
+        })
+      ).status,
+      200,
+    );
+
+    // AT-30: barcha tasdiqlar bajarilgan - shartnoma yopiladi.
+    assert.equal((await yopish("complete")).status, 200);
+    assert.equal(await qarz(), 0, "qarz aynan nolga tushadi");
+    const yozuv = (
+      await pool.query(
+        "SELECT * FROM contract_closures WHERE contract_id=$1 AND status='completed'",
+        [contract],
+      )
+    ).rows[0];
+    assert.equal(yozuv.kind, "early");
+    assert.equal(Number(yozuv.markup_cancelled), 1_680_000);
+    assert.equal(Number(yozuv.close_amount), 5_600_000);
+    assert.equal(yozuv.decided_by, admin);
+    // Ikkinchi marta yopib bo'lmaydi.
+    assert.equal((await yopish("quote")).status, 400);
+    // Yopish tuzatishi kassaga kirim yaratmaydi.
+    assert.equal(
+      Number(
+        (
+          await pool.query(
+            "SELECT count(*) n FROM cash_entries WHERE branch_id=$1 AND category='Nasiya to‘lovi' AND payment_id IN (SELECT id FROM payments WHERE contract_id=$2)",
+            [b1, contract],
+          )
+        ).rows[0].n,
+      ),
+      3,
+      "faqat uchta haqiqiy to'lov kassada",
+    );
+
+    // PAY-09 hisoboti
+    const hisobot = await (
+      await fetch(origin + "/erp?branch=" + b1 + "&tab=closures", {
+        headers: { cookie: auth },
+      })
+    ).text();
+    assert.ok(hisobot.includes("SYNTHETIC YOPISH mijoz"));
+    assert.ok(hisobot.includes("1 680 000"));
+
+    // AT-32: yopish to'lovini qaytarish yopishni ham teskari qiladi.
+    const oxirgi = (
+      await pool.query(
+        "SELECT id FROM payments WHERE contract_id=$1 AND amount=5600000 AND voided_at IS NULL",
+        [contract],
+      )
+    ).rows[0].id;
+    assert.equal(
+      (
+        await fetch(origin + "/api/payments/void", {
+          method: "POST",
+          headers: { cookie: auth, origin, "content-type": "application/json" },
+          body: JSON.stringify({
+            branchId: b1,
+            paymentId: oxirgi,
+            requestKey: randomUUID(),
+            reason: "SYNTHETIC yopishni qaytarish",
+          }),
+        })
+      ).status,
+      200,
+    );
+    assert.equal(await qarz(), 7_280_000, "qarz va ustama qaytadi");
+    assert.equal(
+      (
+        await pool.query(
+          "SELECT status FROM contract_closures WHERE id=$1",
+          [yozuv.id],
+        )
+      ).rows[0].status,
+      "reversed",
+    );
+    assert.ok(
+      !(
+        await (
+          await fetch(origin + "/erp?branch=" + b1 + "&tab=closures", {
+            headers: { cookie: auth },
+          })
+        ).text()
+      ).includes("SYNTHETIC YOPISH mijoz"),
+      "teskari qilingan yopish hisobotdan chiqadi",
+    );
+  },
+);
+
+test(
+  "HTTP: qarzdorlar ro'yxatida eslatma matni va telefon",
+  { skip: !connection },
+  async () => {
+    const auth = await login(admin + "@example.invalid");
+    const item = (
+      await (
+        await post(
+          "inventory",
+          { imei: "477777777777777", model: "SYNTHETIC ESLATMA", cost: 1_000_000 },
+          b1,
+          auth,
+        )
+      ).json()
+    ).id;
+    assert.equal(
+      (
+        await post(
+          "contracts",
+          {
+            inventoryId: item,
+            customerName: "SYNTHETIC ESLATMA mijoz",
+            phone1: "+998 90 777 77 77",
+            priceUzs: 3_000_000,
+            downPayment: 1_000_000,
+            months: 3,
+            monthlyRateBp: 500,
+            startDate: "2026-01-15",
+          },
+          b1,
+          auth,
+        )
+      ).status,
+      200,
+    );
+    const html = await (
+      await fetch(origin + "/erp?branch=" + b1 + "&tab=arrears&status=all", {
+        headers: { cookie: auth },
+      })
+    ).text();
+    assert.ok(html.includes("SYNTHETIC ESLATMA mijoz"));
+    assert.ok(html.includes("+998 90 777 77 77"), "telefon ro‘yxatda ko‘rinadi");
+    assert.ok(html.includes("Eslatma matni"));
+    assert.ok(
+      html.includes("Infinity do‘konidan eslatma"),
+      "eslatma matni tayyorlanadi",
+    );
+  },
+);
+
+test(
+  "HTTP: qora ro'yxat va mijoz limiti",
+  { skip: !connection },
+  async () => {
+    const auth = await login(admin + "@example.invalid");
+    const kassirAuth = await login(kassir + "@example.invalid");
+    const device = async (imei: string) =>
+      (
+        await (
+          await post(
+            "inventory",
+            { imei, model: "SYNTHETIC LIMIT", cost: 9_000_000 },
+            b1,
+            auth,
+          )
+        ).json()
+      ).id as string;
+    const pnfl = "6" + String(Date.now()).slice(-13);
+    const mijoz = {
+      customerName: "SYNTHETIC LIMIT mijoz",
+      pnfl,
+      downPayment: 0,
+      months: 6,
+      monthlyRateBp: 500,
+      startDate: "2026-09-25",
+    };
+    const shartnoma = (priceUzs: number, extra: Record<string, unknown>) =>
+      post("contracts", { ...mijoz, priceUzs, ...extra }, b1, auth);
+    // Birinchi ikkita shartnoma chegara ichida: har biri 5 mln narx,
+    // ustama bilan 6.5 mln qarz - jami 13 mln, chegara 25 mln.
+    for (const imei of ["511111111111111", "522222222222222"])
+      assert.equal(
+        (await shartnoma(5_000_000, { inventoryId: await device(imei) }))
+          .status,
+        200,
+      );
+    const customerId = (
+      await pool.query("SELECT id FROM customers WHERE pnfl=$1", [pnfl])
+    ).rows[0].id;
+    // Uchinchisi faol shartnoma chegarasidan oshadi.
+    const uchinchi = await shartnoma(5_000_000, {
+      inventoryId: await device("533333333333333"),
+    });
+    assert.equal(uchinchi.status, 400);
+    // Rahbar sabab yozsa o'tadi va shartnomada kim ruxsat bergani qoladi.
+    const ruxsat = await shartnoma(5_000_000, {
+      inventoryId: await device("544444444444444"),
+      limitOverrideReason: "Eski mijoz, hamma to‘lovni vaqtida qilgan",
+    });
+    assert.equal(ruxsat.status, 200);
+    const uchinchiRow = (
+      await pool.query("SELECT * FROM contracts WHERE id=$1", [
+        (await ruxsat.json()).id,
+      ])
+    ).rows[0];
+    assert.equal(uchinchiRow.limit_override_by, admin);
+    assert.ok(uchinchiRow.limit_override_reason.includes("Eski mijoz"));
+
+    // Qora ro'yxat: faqat rahbar qo'sha oladi.
+    const block = (body: Record<string, unknown>, cookie = auth) =>
+      fetch(origin + "/api/customers/block", {
+        method: "POST",
+        headers: { cookie, origin, "content-type": "application/json" },
+        body: JSON.stringify({ branchId: b1, customerId, ...body }),
+      });
+    assert.equal(
+      (await block({ action: "block", reason: "Sinov" })).status,
+      400,
+      "sabab kamida 5 belgi",
+    );
+    assert.equal(
+      (
+        await block(
+          { action: "block", reason: "To‘lovni uzoq kechiktirdi" },
+          await login(viewer + "@example.invalid"),
+        )
+      ).status,
+      403,
+    );
+    assert.equal(
+      (await block({ action: "block", reason: "To‘lovni uzoq kechiktirdi" }))
+        .status,
+      200,
+    );
+    // Qora ro'yxatdagi mijozga nasiya berilmaydi - rahbar ham bera olmaydi.
+    const bloklangan = await shartnoma(5_000_000, {
+      inventoryId: await device("555555555555555"),
+      limitOverrideReason: "Baribir beramiz",
+    });
+    assert.equal(bloklangan.status, 400);
+    // Ro'yxatdan chiqarilsa yana ishlaydi.
+    assert.equal((await block({ action: "unblock" })).status, 200);
+    assert.equal(
+      (
+        await shartnoma(5_000_000, {
+          inventoryId: await device("566666666666666"),
+          limitOverrideReason: "Ro‘yxatdan chiqarildi, davom etamiz",
+        })
+      ).status,
+      200,
+    );
+    // Kassir limitdan oshira olmaydi.
+    assert.equal(
+      (
+        await post(
+          "contracts",
+          {
+            ...mijoz,
+            inventoryId: await device("577777777777777"),
+            priceUzs: 5_000_000,
+            limitOverrideReason: "Kassir o‘zi ruxsat bermoqchi",
+          },
+          b1,
+          kassirAuth,
+        )
+      ).status,
+      400,
+    );
+    // Qarzdorlar ekranida kechikish guruhlari va zaxira ko'rinadi.
+    const html = await (
+      await fetch(origin + "/erp?branch=" + b1 + "&tab=arrears&status=all", {
+        headers: { cookie: auth },
+      })
+    ).text();
+    for (const k of ["1-30 kun", "31-60 kun", "61-90 kun", "91+ kun", "Zaxira (5%)"])
+      assert.ok(html.includes(k), "topilmadi: " + k);
+  },
+);
+
+test(
+  "HTTP: qurilma nazorati va inkassatsiya ko'rsatkichi",
+  { skip: !connection },
+  async () => {
+    const auth = await login(admin + "@example.invalid");
+    const kassirAuth = await login(kassir + "@example.invalid");
+    const item = (
+      await (
+        await post(
+          "inventory",
+          { imei: "588888888888888", model: "SYNTHETIC NAZORAT", cost: 5_000_000 },
+          b1,
+          auth,
+        )
+      ).json()
+    ).id;
+    const contract = (
+      await (
+        await post(
+          "contracts",
+          {
+            inventoryId: item,
+            customerName: "SYNTHETIC NAZORAT mijoz",
+            priceUzs: 6_000_000,
+            downPayment: 1_000_000,
+            months: 3,
+            monthlyRateBp: 500,
+            startDate: "2026-09-25",
+          },
+          b1,
+          auth,
+        )
+      ).json()
+    ).id;
+    const control = (body: Record<string, unknown>, cookie = auth) =>
+      fetch(origin + "/api/devices/control", {
+        method: "POST",
+        headers: { cookie, origin, "content-type": "application/json" },
+        body: JSON.stringify({ branchId: b1, contractId: contract, ...body }),
+      });
+    const holat = async () =>
+      (
+        await pool.query("SELECT control_state FROM contracts WHERE id=$1", [
+          contract,
+        ])
+      ).rows[0].control_state;
+    assert.equal(await holat(), "none");
+    // O'rnatmasdan bloklab bo'lmaydi.
+    assert.equal(
+      (await control({ action: "block", reason: "Kechikdi juda" })).status,
+      400,
+    );
+    assert.equal((await control({ action: "install" })).status, 200);
+    assert.equal(await holat(), "installed");
+    // Bloklashda sabab majburiy.
+    assert.equal((await control({ action: "block" })).status, 400);
+    assert.equal(
+      (await control({ action: "block", reason: "45 kun kechikdi, aloqa yo‘q" }))
+        .status,
+      200,
+    );
+    assert.equal(await holat(), "blocked");
+    // Faqat ko'ruvchi rolida nazoratga tegib bo'lmaydi.
+    assert.equal(
+      (
+        await control(
+          { action: "unblock" },
+          await login(viewer + "@example.invalid"),
+        )
+      ).status,
+      403,
+    );
+    assert.equal((await control({ action: "unblock" })).status, 200);
+    assert.equal(await holat(), "installed");
+    // Hujjat qolgan: sabab, kechikish va qarz yozilgan.
+    const log = (
+      await pool.query(
+        "SELECT action,reason,debt FROM device_controls WHERE contract_id=$1 ORDER BY created_at",
+        [contract],
+      )
+    ).rows;
+    assert.deepEqual(
+      log.map((r) => r.action),
+      ["install", "block", "unblock"],
+    );
+    assert.ok(log[1].reason.includes("45 kun"));
+    assert.equal(Number(log[1].debt), 5_750_000);
+    // Shartnoma sahifasida holat va tarix ko'rinadi.
+    const sahifa = await (
+      await fetch(origin + "/erp/contracts/" + contract + "?branch=" + b1, {
+        headers: { cookie: auth },
+      })
+    ).text();
+    assert.ok(sahifa.includes("Qurilma nazorati"));
+    assert.ok(sahifa.includes("45 kun kechikdi"));
+    assert.ok(sahifa.includes("Nazoratda"));
+
+    // Inkassatsiya: kassir kiritgan naqd tushum kassa qoldig'iga kirmaydi,
+    // lekin dashboardda "undiruvchi qo'lida" bo'lib ko'rinadi.
+    const undiruvchi = randomUUID();
+    extraUsers.push(undiruvchi);
+    await pool.query("INSERT INTO users VALUES($1,$2,$3)", [
+      undiruvchi,
+      undiruvchi + "@example.invalid",
+      (
+        await pool.query("SELECT password_hash FROM users WHERE id=$1", [admin])
+      ).rows[0].password_hash,
+    ]);
+    await pool.query(
+      "INSERT INTO memberships VALUES($1,$2,$3,'collector')",
+      [undiruvchi, tenant, b1],
+    );
+    const undiruvchiAuth = await login(undiruvchi + "@example.invalid");
+    const naqd = await post(
+      "payments",
+      {
+        contractId: contract,
+        amount: 500_000,
+        method: "cash",
+        requestKey: randomUUID(),
+      },
+      b1,
+      undiruvchiAuth,
+    );
+    assert.equal(naqd.status, 200);
+    assert.equal(
+      (
+        await pool.query("SELECT status FROM payments WHERE id=$1", [
+          (await naqd.json()).id,
+        ])
+      ).rows[0].status,
+      "pending",
+      "undiruvchi naqd pulni o'zi tasdiqlay olmaydi",
+    );
+    const dash = await (
+      await fetch(origin + "/erp?branch=" + b1 + "&tab=dashboard", {
+        headers: { cookie: auth },
+      })
+    ).text();
+    assert.ok(dash.includes("Undiruvchi qo‘lida"));
+    // Kassir tasdiqlaganda pul kassaga kiradi.
+    assert.equal(
+      (
+        await fetch(origin + "/api/payments/approve", {
+          method: "POST",
+          headers: {
+            cookie: kassirAuth,
+            origin,
+            "content-type": "application/json",
+          },
+          body: JSON.stringify({
+            branchId: b1,
+            paymentId: (
+              await pool.query(
+                "SELECT id FROM payments WHERE contract_id=$1 AND status='pending'",
+                [contract],
+              )
+            ).rows[0].id,
+            decision: "approve",
+          }),
+        })
+      ).status,
+      200,
+    );
+  },
+);
+
+test(
+  "HTTP: Kirim kartochkasi to'liq saqlanadi va shartnomada ko'rinadi",
+  { skip: !connection },
+  async () => {
+    const auth = await login(admin + "@example.invalid");
+    const kirim = await post(
+      "inventory",
+      {
+        imei: "356789012345678",
+        imei2: "356789012345678/1",
+        brand: "Iphone",
+        model: "17 Pro Max",
+        memory: "256",
+        simType: "sim+esim",
+        color: "silver",
+        region: "HX/A",
+        condition: "Yangi",
+        battery: "100",
+        purchaseDate: "2026-10-01",
+        costUsd: "850.50",
+        costRate: 12_800,
+        expectedPrice: 12_000_000,
+        supplier: "SYNTHETIC Bahodir aka",
+        receivedBy: "Jamoliddin",
+        purchaseMethod: "cash_usd",
+      },
+      b1,
+      auth,
+    );
+    assert.equal(kirim.status, 200);
+    const item = (await kirim.json()).id;
+    const row = (await pool.query("SELECT * FROM inventory WHERE id=$1", [item]))
+      .rows[0];
+    // 850.50 USD * 12 800 = 10 886 400 so'm
+    assert.equal(Number(row.cost), 10_886_400);
+    assert.equal(Number(row.cost_usd_cents), 85_050);
+    assert.equal(Number(row.cost_rate), 12_800);
+    assert.equal(row.brand, "Iphone");
+    assert.equal(row.memory, "256");
+    assert.equal(row.sim_type, "sim+esim");
+    assert.equal(row.battery, "100");
+    assert.equal(row.purchase_method, "cash_usd");
+    assert.equal(row.received_by, "Jamoliddin");
+    assert.ok(row.supplier_id, "yetkazib beruvchi yaratildi");
+    assert.equal(
+      (
+        await pool.query("SELECT name FROM suppliers WHERE id=$1", [
+          row.supplier_id,
+        ])
+      ).rows[0].name,
+      "SYNTHETIC Bahodir aka",
+    );
+    // Ikkinchi kirim o'sha yetkazib beruvchiga bog'lanadi, dublikat chiqmaydi.
+    const ikkinchi = await post(
+      "inventory",
+      {
+        imei: "J4RMVWVXVV",
+        brand: "Macbook",
+        model: "Air 13",
+        cost: 9_000_000,
+        supplier: "SYNTHETIC Bahodir aka",
+      },
+      b1,
+      auth,
+    );
+    assert.equal(ikkinchi.status, 200, "Apple seriya raqami ham qabul qilinadi");
+    assert.equal(
+      (
+        await pool.query(
+          "SELECT count(*) n FROM suppliers WHERE tenant_id=$1 AND name=$2",
+          [tenant, "SYNTHETIC Bahodir aka"],
+        )
+      ).rows[0].n,
+      "1",
+    );
+    // Tannarxsiz kirim qabul qilinmaydi.
+    assert.equal(
+      (await post("inventory", { imei: "356789012345679", model: "x" }, b1, auth))
+        .status,
+      400,
+    );
+    // Ombor ekranida tavsif va qidiruv ishlaydi.
+    const ombor = await (
+      await fetch(origin + "/erp?branch=" + b1 + "&tab=inventory&q=silver", {
+        headers: { cookie: auth },
+      })
+    ).text();
+    assert.ok(ombor.includes("Iphone 17 Pro Max 256 silver"));
+    assert.ok(ombor.includes("batareyka 100%"));
+    assert.ok(ombor.includes("356789012345678/1"));
+    // Shartnoma chop etilganda tovar nomi to'liq chiqadi.
+    const contract = (
+      await (
+        await post(
+          "contracts",
+          {
+            inventoryId: item,
+            customerName: "SYNTHETIC KIRIM mijoz",
+            priceUzs: 12_000_000,
+            downPayment: 2_000_000,
+            months: 6,
+            monthlyRateBp: 500,
+            startDate: "2026-10-01",
+          },
+          b1,
+          auth,
+        )
+      ).json()
+    ).id;
+    const html = await (
+      await fetch(
+        origin + "/erp/contracts/" + contract + "/shartnoma?branch=" + b1,
+        { headers: { cookie: auth } },
+      )
+    ).text();
+    assert.ok(html.includes("17 Pro Max 256 silver"), "tovar nomi to‘liq");
+  },
+);
+
+test(
+  "HTTP: kirimning pul tomoni va yetkazib beruvchi qarzi",
+  { skip: !connection },
+  async () => {
+    const auth = await login(admin + "@example.invalid");
+    const hamyon = async (wallet: string) =>
+      Number(
+        (
+          await pool.query(
+            "SELECT COALESCE(sum(amount_minor),0) n FROM cash_entries WHERE branch_id=$1 AND wallet=$2",
+            [b1, wallet],
+          )
+        ).rows[0].n,
+      );
+    const kirim = (body: Record<string, unknown>) =>
+      post("inventory", { model: "SYNTHETIC SUP", ...body }, b1, auth);
+
+    // 1. Naqd USD xarid: dollar hamyonidan chiqadi.
+    const usdBefore = await hamyon("cash_usd");
+    const naqd = await kirim({
+      imei: "611111111111111",
+      costUsd: "800.00",
+      costRate: 12_500,
+      supplier: "SYNTHETIC Olim aka",
+      purchaseMethod: "cash_usd",
+    });
+    assert.equal(naqd.status, 200);
+    assert.equal(await hamyon("cash_usd"), usdBefore - 80_000);
+    // Naqd xarid qarz yaratmaydi.
+    assert.equal(
+      Number(
+        (await pool.query("SELECT count(*) n FROM supplier_obligations"))
+          .rows[0].n,
+      ),
+      0,
+    );
+
+    // 2. Qarzga xarid: kassada harakat yo'q, majburiyat paydo bo'ladi.
+    const uzsBefore = await hamyon("cash_uzs");
+    const qarzga = await kirim({
+      imei: "622222222222222",
+      cost: 10_000_000,
+      supplier: "SYNTHETIC Olim aka",
+      purchaseMethod: "debt",
+    });
+    assert.equal(qarzga.status, 200);
+    assert.equal(await hamyon("cash_uzs"), uzsBefore, "qarzga xarid pul chiqarmaydi");
+    const supplierId = (
+      await pool.query("SELECT id FROM suppliers WHERE name=$1", [
+        "SYNTHETIC Olim aka",
+      ])
+    ).rows[0].id;
+    assert.equal(
+      Number(
+        (
+          await pool.query(
+            "SELECT sum(amount) n FROM supplier_obligations WHERE supplier_id=$1",
+            [supplierId],
+          )
+        ).rows[0].n,
+      ),
+      10_000_000,
+    );
+    // Yetkazib beruvchisiz qarzga xarid qabul qilinmaydi.
+    assert.equal(
+      (
+        await kirim({
+          imei: "633333333333333",
+          cost: 1_000_000,
+          purchaseMethod: "debt",
+        })
+      ).status,
+      400,
+    );
+
+    // 3. Investor tovari: na chiqim, na qarz - lekin kapital daftariga
+    // tannarx bo'yicha kirim yoziladi.
+    const investorId = (
+      await (
+        await fetch(origin + "/api/investors", {
+          method: "POST",
+          headers: { cookie: auth, origin, "content-type": "application/json" },
+          body: JSON.stringify({
+            branchId: b1,
+            action: "investor",
+            name: "SYNTHETIC INV TOVAR",
+          }),
+        })
+      ).json()
+    ).id as string;
+    // Investorni tanlamasa qabul qilinmaydi.
+    assert.equal(
+      (
+        await kirim({
+          imei: "644444444444441",
+          costUsd: "583.33",
+          costRate: 12_000,
+          purchaseMethod: "investor",
+        })
+      ).status,
+      400,
+    );
+    // So'mdagi tannarx ham yetmaydi: kapital dollarda yuritiladi.
+    assert.equal(
+      (
+        await kirim({
+          imei: "644444444444442",
+          cost: 7_000_000,
+          purchaseMethod: "investor",
+          investorId,
+        })
+      ).status,
+      400,
+    );
+    const investor = await kirim({
+      imei: "644444444444444",
+      costUsd: "583.33",
+      costRate: 12_000,
+      purchaseDate: "2026-09-20",
+      supplier: "SYNTHETIC Olim aka",
+      purchaseMethod: "investor",
+      investorId,
+    });
+    assert.equal(investor.status, 200);
+    assert.equal(await hamyon("cash_uzs"), uzsBefore);
+    const kapital = (
+      await pool.query(
+        `SELECT e.day::text,e.kind,e.form,e.cents,e.inventory_id
+ FROM investor_entries e WHERE e.investor_id=$1`,
+        [investorId],
+      )
+    ).rows;
+    assert.equal(kapital.length, 1, "kirim bitta kapital yozuvi yaratadi");
+    assert.equal(kapital[0].day, "2026-09-20", "omborga kirgan kun bilan");
+    assert.equal(kapital[0].kind, "capital");
+    assert.equal(kapital[0].form, "goods");
+    assert.equal(Number(kapital[0].cents), 58_333, "tannarx dollarda");
+    assert.equal(kapital[0].inventory_id, (await investor.json()).id);
+
+    // 4. Qarz to'lovi: majburiyat kamayadi, kassadan pul chiqadi.
+    const pay = (body: Record<string, unknown>) =>
+      fetch(origin + "/api/suppliers/pay", {
+        method: "POST",
+        headers: { cookie: auth, origin, "content-type": "application/json" },
+        body: JSON.stringify({
+          branchId: b1,
+          supplierId,
+          wallet: "cash_uzs",
+          requestKey: randomUUID(),
+          ...body,
+        }),
+      });
+    // Qarzdan ortiq to'lov o'tmaydi.
+    assert.equal((await pay({ amount: 11_000_000 })).status, 400);
+    const kalit = randomUUID();
+    const birinchi = await pay({ amount: 4_000_000, requestKey: kalit });
+    assert.equal(birinchi.status, 200);
+    assert.equal(await hamyon("cash_uzs"), uzsBefore - 4_000_000);
+    // Takroriy so'rov ikkinchi to'lov yaratmaydi.
+    assert.equal((await pay({ amount: 4_000_000, requestKey: kalit })).status, 200);
+    assert.equal(await hamyon("cash_uzs"), uzsBefore - 4_000_000);
+    assert.equal(
+      Number(
+        (
+          await pool.query(
+            "SELECT count(*) n FROM supplier_settlements WHERE supplier_id=$1",
+            [supplierId],
+          )
+        ).rows[0].n,
+      ),
+      1,
+    );
+    // USD hamyonidan to'lovda kurs saqlanadi.
+    const usdPay = await pay({
+      wallet: "cash_usd",
+      usdAmount: "400.00",
+      rate: 12_500,
+    });
+    assert.equal(usdPay.status, 200);
+    assert.equal(await hamyon("cash_usd"), usdBefore - 80_000 - 40_000);
+    const settlement = (
+      await pool.query(
+        "SELECT * FROM supplier_settlements WHERE wallet='cash_usd' AND supplier_id=$1",
+        [supplierId],
+      )
+    ).rows[0];
+    assert.equal(Number(settlement.amount), 5_000_000);
+    assert.equal(Number(settlement.rate), 12_500);
+    // Qarz to'liq yopildi: yangi to'lov qabul qilinmaydi.
+    assert.equal((await pay({ amount: 1_000_000 })).status, 400);
+
+    // 5. Ekranda qarz va jamilar ko'rinadi.
+    const html = await (
+      await fetch(origin + "/erp?branch=" + b1 + "&tab=suppliers", {
+        headers: { cookie: auth },
+      })
+    ).text();
+    assert.ok(html.includes("SYNTHETIC Olim aka"));
+    assert.ok(html.includes("Jami qarzimiz"));
+  },
+);
+
+test(
+  "HTTP: kun yopish va chiqimlar hisoboti (CASH-04)",
+  { skip: !connection },
+  async () => {
+    const auth = await login(admin + "@example.invalid");
+    const kassirAuth = await login(kassir + "@example.invalid");
+    const bugun = (
+      await pool.query(
+        "SELECT (now() AT TIME ZONE 'Asia/Tashkent')::date::text d",
+      )
+    ).rows[0].d;
+    const yopish = (body: Record<string, unknown>, cookie = auth) =>
+      fetch(origin + "/api/cash/close", {
+        method: "POST",
+        headers: { cookie, origin, "content-type": "application/json" },
+        body: JSON.stringify({ branchId: b2, day: bugun, ...body }),
+      });
+    const sanalgan = {
+      cash_uzs: "0",
+      cash_usd: "0",
+      card_uzs: "0",
+      bank_uzs: "0",
+    };
+    // Boshlang'ich qoldiq belgilanmagan hamyon bilan kun yopilmaydi.
+    const bosh = await yopish({ counted: sanalgan });
+    assert.equal(bosh.status, 400);
+    assert.ok((await bosh.json()).error.includes("boshlang‘ich"));
+    // Boshlang'ich qoldiqni admin belgilaydi.
+    for (const [wallet, amount] of [
+      ["cash_uzs", "1000000"],
+      ["cash_usd", "100.00"],
+      ["card_uzs", "0"],
+      ["bank_uzs", "0"],
+    ])
+      assert.equal(
+        (
+          await fetch(origin + "/api/cash", {
+            method: "POST",
+            headers: { cookie: auth, origin, "content-type": "application/json" },
+            body: JSON.stringify({
+              branchId: b2,
+              requestKey: randomUUID(),
+              action: "opening",
+              wallet,
+              date: bugun,
+              amount,
+            }),
+          })
+        ).status,
+        200,
+        wallet,
+      );
+    // Xarajat yozamiz: ijara 300 000 so'm.
+    assert.equal(
+      (
+        await fetch(origin + "/api/cash", {
+          method: "POST",
+          headers: { cookie: auth, origin, "content-type": "application/json" },
+          body: JSON.stringify({
+            branchId: b2,
+            requestKey: randomUUID(),
+            action: "entry",
+            wallet: "cash_uzs",
+            date: bugun,
+            amount: "300000",
+            direction: "out",
+            category: "Ijara",
+            note: "SYNTHETIC ijara",
+          }),
+        })
+      ).status,
+      200,
+    );
+    // Kassir kunni yopadi: 700 000 qoldiq kutiladi, 690 000 sanaldi.
+    const yopildi = await yopish(
+      {
+        counted: { ...sanalgan, cash_uzs: "690000", cash_usd: "100.00" },
+        note: "SYNTHETIC kun yopish",
+      },
+      kassirAuth,
+    );
+    assert.equal(yopildi.status, 200);
+    const satr = (
+      await pool.query(
+        `SELECT l.wallet,l.computed_minor,l.counted_minor FROM cash_closing_lines l
+ JOIN cash_closings x ON x.id=l.closing_id WHERE x.branch_id=$1 AND x.day=$2::date
+ ORDER BY l.wallet`,
+        [b2, bugun],
+      )
+    ).rows;
+    const naqd = satr.find((r) => r.wallet === "cash_uzs");
+    assert.equal(Number(naqd.computed_minor), 700_000);
+    assert.equal(Number(naqd.counted_minor), 690_000);
+    assert.equal(
+      Number(satr.find((r) => r.wallet === "cash_usd").computed_minor),
+      10_000,
+      "USD sentda hisoblanadi",
+    );
+    // Ikkinchi marta yopib bo'lmaydi.
+    assert.equal((await yopish({ counted: sanalgan })).status, 400);
+    // Yopilgan kunga yangi yozuv kirmaydi.
+    const kech = await fetch(origin + "/api/cash", {
+      method: "POST",
+      headers: { cookie: auth, origin, "content-type": "application/json" },
+      body: JSON.stringify({
+        branchId: b2,
+        requestKey: randomUUID(),
+        action: "entry",
+        wallet: "cash_uzs",
+        date: bugun,
+        amount: "50000",
+        direction: "out",
+        category: "Transport",
+      }),
+    });
+    assert.equal(kech.status, 400);
+    assert.ok((await kech.json()).error.includes("yopilgan"));
+    // Kassir qayta ocholmaydi, rahbar ochadi - sabab majburiy.
+    assert.equal(
+      (await yopish({ action: "reopen", reason: "Sanoqda xato" }, kassirAuth))
+        .status,
+      403,
+    );
+    assert.equal((await yopish({ action: "reopen", reason: "xato" })).status, 400);
+    assert.equal(
+      (await yopish({ action: "reopen", reason: "Sanoqda xato bo‘ldi" })).status,
+      200,
+    );
+    // Qayta ochilgandan keyin yozuv o'tadi.
+    assert.equal(
+      (
+        await fetch(origin + "/api/cash", {
+          method: "POST",
+          headers: { cookie: auth, origin, "content-type": "application/json" },
+          body: JSON.stringify({
+            branchId: b2,
+            requestKey: randomUUID(),
+            action: "entry",
+            wallet: "cash_uzs",
+            date: bugun,
+            amount: "50000",
+            direction: "out",
+            category: "Transport",
+          }),
+        })
+      ).status,
+      200,
+    );
+    // Chiqimlar hisoboti kategoriya bo'yicha ko'rinadi.
+    const html = await (
+      await fetch(origin + "/erp?branch=" + b2 + "&tab=cash", {
+        headers: { cookie: auth },
+      })
+    ).text();
+    assert.ok(html.includes("Shu oyning chiqimlari"));
+    assert.ok(html.includes("Ijara"));
+    assert.ok(html.includes("Sanoqda xato bo‘ldi"), "qayta ochish sababi tarixda");
+  },
+);
+
+test(
+  "HTTP: oylik foyda hisoboti (TZ 6.9)",
+  { skip: !connection },
+  async () => {
+    const auth = await login(admin + "@example.invalid");
+    const oy = (
+      await pool.query(
+        "SELECT to_char((now() AT TIME ZONE 'Asia/Tashkent')::date,'YYYY-MM') oy",
+      )
+    ).rows[0].oy;
+    const bugun = (
+      await pool.query(
+        "SELECT (now() AT TIME ZONE 'Asia/Tashkent')::date::text d",
+      )
+    ).rows[0].d;
+    // Tannarxi 8 mln qurilma, narxi 10 mln: marja 2 mln.
+    const item = (
+      await (
+        await post(
+          "inventory",
+          { imei: "711111111111111", model: "SYNTHETIC FOYDA", cost: 8_000_000 },
+          b3,
+          outsiderCookie,
+        )
+      ).json()
+    ).id;
+    // Boshqa tenant (b3) - o'z filialida hisoblansin.
+    const contract = (
+      await (
+        await post(
+          "contracts",
+          {
+            inventoryId: item,
+            customerName: "SYNTHETIC FOYDA mijoz",
+            priceUzs: 10_000_000,
+            downPayment: 2_000_000,
+            months: 4,
+            monthlyRateBp: 500,
+            startDate: bugun,
+          },
+          b3,
+          outsiderCookie,
+        )
+      ).json()
+    ).id;
+    // Ustama: 8 mln * 5% * 4 = 1.6 mln. To'lov 2 400 000 dan ustama ulushi:
+    // 2 400 000 * 1 600 000 / 9 600 000 = 400 000.
+    assert.equal(
+      (
+        await post(
+          "payments",
+          {
+            contractId: contract,
+            amount: 2_400_000,
+            method: "cash",
+            requestKey: randomUUID(),
+          },
+          b3,
+          outsiderCookie,
+        )
+      ).status,
+      200,
+    );
+    // Xarajat: 500 000 so'm ijara.
+    assert.equal(
+      (
+        await fetch(origin + "/api/cash", {
+          method: "POST",
+          headers: {
+            cookie: outsiderCookie,
+            origin,
+            "content-type": "application/json",
+          },
+          body: JSON.stringify({
+            branchId: b3,
+            requestKey: randomUUID(),
+            action: "entry",
+            wallet: "cash_uzs",
+            date: bugun,
+            amount: "500000",
+            direction: "out",
+            category: "Ijara",
+          }),
+        })
+      ).status,
+      200,
+    );
+    const html = await (
+      await fetch(origin + "/erp?branch=" + b3 + "&tab=profit&oy=" + oy, {
+        headers: { cookie: outsiderCookie },
+      })
+    ).text();
+    // Marja 2 mln, nasiya daromadi 400 ming, xarajat 500 ming,
+    // sof foyda 1 900 000.
+    for (const kutilgan of ["2 000 000", "400 000", "500 000", "1 900 000"])
+      assert.ok(
+        html.includes(kutilgan),
+        "foyda hisobotida topilmadi: " + kutilgan,
+      );
+    assert.ok(html.includes("Sof foyda"));
+    assert.ok(html.includes("boshqaruv hisobi"));
+
+    // Erta yopish allaqachon tan olingan daromadni o'zgartirmaydi.
+    // Qarz 7 200 000, o'tgan davr 0 -> 1 200 000 ustama bekor qilinadi,
+    // yopish summasi 6 000 000. Mijoz jami 8 400 000 to'laydi: asosiy
+    // 8 000 000 + ishlab olingan ustama 400 000. Hisobotdagi nasiya
+    // daromadi shuning uchun 400 000 bo'lib qolishi kerak - yopish
+    // to'lovi ustamani proporsional tan olgani uchun ortiqcha tan
+    // olingan 1 000 000 aynan shuncha tuzatiladi, 1 200 000 emas.
+    const yopishB3 = (action: string) =>
+      fetch(origin + "/api/closures", {
+        method: "POST",
+        headers: {
+          cookie: outsiderCookie,
+          origin,
+          "content-type": "application/json",
+        },
+        body: JSON.stringify({ branchId: b3, contractId: contract, action }),
+      });
+    const h3 = await (await yopishB3("quote")).json();
+    assert.equal(h3.markupCancelled, 1_200_000);
+    assert.equal(h3.closeAmount, 6_000_000);
+    assert.equal(h3.markupKept, 400_000);
+    assert.equal(
+      (
+        await post(
+          "payments",
+          {
+            contractId: contract,
+            amount: 6_000_000,
+            method: "cash",
+            requestKey: randomUUID(),
+          },
+          b3,
+          outsiderCookie,
+        )
+      ).status,
+      200,
+    );
+    assert.equal((await yopishB3("complete")).status, 200);
+    const keyin = await (
+      await fetch(origin + "/erp?branch=" + b3 + "&tab=profit&oy=" + oy, {
+        headers: { cookie: outsiderCookie },
+      })
+    ).text();
+    for (const kutilgan of ["2 000 000", "400 000", "500 000", "1 900 000"])
+      assert.ok(
+        keyin.includes(kutilgan),
+        "erta yopishdan keyin foyda o'zgarmasligi kerak: " + kutilgan,
+      );
+    assert.ok(
+      keyin.includes("1 200 000") && keyin.includes("bekor qilingan"),
+      "bekor qilingan ustama alohida ko'rsatilsin",
+    );
+
+    // Tafsilot: har raqamning ichi ochiladi va yig'indisi hisobotdagi
+    // songa teng chiqadi.
+    const tafsil = async (kind: string) =>
+      (
+        await fetch(
+          origin +
+            "/erp?branch=" +
+            b3 +
+            "&tab=profit&oy=" +
+            oy +
+            "&tafsil=" +
+            kind,
+          { headers: { cookie: outsiderCookie } },
+        )
+      ).text();
+    const marjaIchi = await tafsil("marja");
+    assert.ok(marjaIchi.includes("Sotuv marjasi —"));
+    assert.ok(marjaIchi.includes("SYNTHETIC FOYDA"), "sotuv qatori ko'rinsin");
+    for (const n of ["10 000 000", "8 000 000", "2 000 000"])
+      assert.ok(marjaIchi.includes(n), "marja tafsilotida yo'q: " + n);
+    // Ustama: to'lovlardan 400 000 + 1 000 000, erta yopish tuzatishi
+    // −1 000 000. Yig'indi 400 000 - hisobotdagi son bilan bir xil.
+    const ustamaIchi = await tafsil("ustama");
+    assert.ok(ustamaIchi.includes("erta yopish"), "yopish tuzatishi ko'rinsin");
+    assert.ok(ustamaIchi.includes("400 000"));
+    const xarajatIchi = await tafsil("xarajat");
+    assert.ok(
+      xarajatIchi.includes("Ijara") && xarajatIchi.includes("500 000"),
+    );
+    // Noto'g'ri tur so'ralsa marja ko'rsatiladi, xato bermaydi.
+    assert.ok((await tafsil("yoq")).includes("Sotuv marjasi —"));
+
+    // Noto'g'ri oy so'ralsa hozirgi oy ko'rsatiladi, xato bermaydi.
+    const yomon = await fetch(
+      origin + "/erp?branch=" + b3 + "&tab=profit&oy=notdate",
+      { headers: { cookie: outsiderCookie } },
+    );
+    assert.equal(yomon.status, 200);
+  },
+);
+
+test(
+  "HTTP: oylik reja — plan, fakt, foiz va kunlik norma",
+  { skip: !connection },
+  async () => {
+    const auth = await login(admin + "@example.invalid");
+    const oy = (
+      await pool.query(
+        "SELECT to_char((now() AT TIME ZONE 'Asia/Tashkent')::date,'YYYY-MM') oy",
+      )
+    ).rows[0].oy;
+    const reja = (body: Record<string, unknown>, cookie = auth) =>
+      fetch(origin + "/api/targets", {
+        method: "POST",
+        headers: { cookie, origin, "content-type": "application/json" },
+        body: JSON.stringify({ branchId: b3, month: oy, ...body }),
+      });
+    // Ko'ruvchi reja belgilay olmaydi.
+    assert.equal(
+      (
+        await reja(
+          { values: { sof_foyda: 1 } },
+          await login(viewer + "@example.invalid"),
+        )
+      ).status,
+      403,
+    );
+    assert.equal(
+      (
+        await reja(
+          {
+            values: {
+              sotuv_dona_nasiya: 10,
+              sotuv_summa_nasiya: 100_000_000,
+              sof_foyda: 5_000_000,
+            },
+          },
+          outsiderCookie,
+        )
+      ).status,
+      200,
+    );
+    const html = await (
+      await fetch(origin + "/erp?branch=" + b3 + "&tab=profit&oy=" + oy, {
+        headers: { cookie: outsiderCookie },
+      })
+    ).text();
+    assert.ok(html.includes("Oylik reja"));
+    assert.ok(html.includes("Sof foyda"));
+    // Oldingi sinovda 1 ta nasiya sotuvi bo'lgan: 10 dan 1 tasi = 10%.
+    assert.ok(html.includes("10%"), "bajarilish foizi ko‘rinadi");
+    // Nol plan o'chiriladi va foiz hisoblanmaydi.
+    assert.equal(
+      (await reja({ values: { sotuv_dona_nasiya: 0 } }, outsiderCookie)).status,
+      200,
+    );
+    assert.equal(
+      Number(
+        (
+          await pool.query(
+            "SELECT count(*) n FROM monthly_targets WHERE branch_id=$1 AND metric='sotuv_dona_nasiya'",
+            [b3],
+          )
+        ).rows[0].n,
+      ),
+      0,
+    );
+  },
+);
+
+test(
+  "HTTP: sotuvchi va kanal natijalari, ombor va portfel",
+  { skip: !connection },
+  async () => {
+    const oy = (
+      await pool.query(
+        "SELECT to_char((now() AT TIME ZONE 'Asia/Tashkent')::date,'YYYY-MM') oy",
+      )
+    ).rows[0].oy;
+    const bugun = (
+      await pool.query(
+        "SELECT (now() AT TIME ZONE 'Asia/Tashkent')::date::text d",
+      )
+    ).rows[0].d;
+    // b3 filialida: tannarx 4 mln, prognoz 6 mln qurilma.
+    const item = (
+      await (
+        await post(
+          "inventory",
+          {
+            imei: "722222222222222",
+            model: "SYNTHETIC KANAL",
+            cost: 4_000_000,
+            expectedPrice: 6_000_000,
+          },
+          b3,
+          outsiderCookie,
+        )
+      ).json()
+    ).id;
+    // Nasiya sotuvi: sotuvchi va kanal bilan.
+    assert.equal(
+      (
+        await post(
+          "contracts",
+          {
+            inventoryId: item,
+            customerName: "SYNTHETIC KANAL mijoz",
+            priceUzs: 5_000_000,
+            downPayment: 1_000_000,
+            months: 4,
+            monthlyRateBp: 500,
+            startDate: bugun,
+            seller: "SYNTHETIC Jahongir",
+            channel: "Instagram",
+          },
+          b3,
+          outsiderCookie,
+        )
+      ).status,
+      200,
+    );
+    const row = (
+      await pool.query(
+        "SELECT seller,channel FROM contracts WHERE inventory_id=$1",
+        [item],
+      )
+    ).rows[0];
+    assert.equal(row.seller, "SYNTHETIC Jahongir");
+    assert.equal(row.channel, "Instagram");
+    const html = await (
+      await fetch(origin + "/erp?branch=" + b3 + "&tab=profit&oy=" + oy, {
+        headers: { cookie: outsiderCookie },
+      })
+    ).text();
+    assert.ok(html.includes("Sotuvchilar"));
+    assert.ok(html.includes("SYNTHETIC Jahongir"));
+    assert.ok(html.includes("Sotuv kanallari"));
+    assert.ok(html.includes("Instagram"));
+    assert.ok(html.includes("Ombordagi tovar"));
+    assert.ok(html.includes("Nasiya portfeli"));
+    // Sotuvchi ko'rsatilmagan sotuv ham ro'yxatda ko'rinadi.
+    assert.ok(html.includes("ko‘rsatilmagan"));
+  },
+);
+
+test(
+  "HTTP: Telegram uchun tayyor matn",
+  { skip: !connection },
+  async () => {
+    const oy = (
+      await pool.query(
+        "SELECT to_char((now() AT TIME ZONE 'Asia/Tashkent')::date,'YYYY-MM') oy",
+      )
+    ).rows[0].oy;
+    const html = await (
+      await fetch(origin + "/erp?branch=" + b3 + "&tab=profit&oy=" + oy, {
+        headers: { cookie: outsiderCookie },
+      })
+    ).text();
+    assert.ok(html.includes("Telegram uchun tayyor matn"));
+    assert.ok(html.includes("Matnni nusxalash"));
+    for (const satr of [
+      "Infinity —",
+      "Sotuv:",
+      "Sof foyda:",
+      "Bugungi to&#x27;lovlar:",
+      "Nasiya qoldig&#x27;i:",
+      "Kechikkan:",
+      "Omborda:",
+    ])
+      assert.ok(html.includes(satr), "matnda yo‘q: " + satr);
+    // Reja qo'yilgan bo'lsa bajarilish foizi ham matnga kiradi.
+    assert.ok(html.includes("rejasi:"));
+  },
+);
+
+test(
+  "HTTP: qarzga sotish - dollardagi qarz, bir necha hamyon (TZ SALE-02)",
+  { skip: !connection },
+  async () => {
+    const auth = await login(admin + "@example.invalid");
+    const kassirAuth = await login(kassir + "@example.invalid");
+    const item = (
+      await (
+        await post(
+          "inventory",
+          {
+            imei: "733333333333333",
+            model: "SYNTHETIC QARZ",
+            cost: 12_000_000,
+          },
+          b1,
+          auth,
+        )
+      ).json()
+    ).id;
+    // Kassirda qarzga sotish huquqi yo'q: ustamasiz qarz berish - pul
+    // qarori, uni faqat rahbar va administrator qiladi.
+    assert.equal(
+      (
+        await post(
+          "qarz",
+          {
+            inventoryId: item,
+            customerName: "SYNTHETIC QARZ mijoz",
+            priceUsd: "1050",
+            rate: 12_000,
+            dueDate: "2026-12-01",
+            tolovlar: [{ method: "cash", amount: 1_000_000 }],
+          },
+          b1,
+          kassirAuth,
+        )
+      ).status,
+      400,
+    );
+    // Kurs 12 000, narx 1050 $, mijoz 500 $ naqd + 2 000 000 so'm naqd +
+    // 400 000 so'm karta to'laydi: qolgani 350 $ = 4 200 000 so'm.
+    const sotuv = await post(
+      "qarz",
+      {
+        inventoryId: item,
+        customerName: "SYNTHETIC QARZ mijoz",
+        phone1: "90-000-00-11",
+        priceUsd: "1050",
+        rate: 12_000,
+        dueDate: "2026-12-01",
+        seller: "SYNTHETIC sotuvchi",
+        tolovlar: [
+          { method: "cash_usd", amount: 50_000 },
+          { method: "cash", amount: 2_000_000 },
+          { method: "card", amount: 400_000 },
+        ],
+      },
+      b1,
+      auth,
+    );
+    assert.equal(sotuv.status, 200);
+    const contract = (await sotuv.json()).id;
+    const row = (
+      await pool.query("SELECT * FROM contracts WHERE id=$1", [contract])
+    ).rows[0];
+    assert.equal(row.kind, "qarz");
+    assert.equal(Number(row.total), 12_600_000);
+    assert.equal(Number(row.down_payment), 8_400_000);
+    assert.equal(Number(row.total_cents), 105_000);
+    assert.equal(Number(row.down_cents), 70_000);
+    assert.equal(Number(row.sale_rate), 12_000);
+    assert.equal(Number(row.markup), 0);
+    // Har hamyon o'z birligida kassaga tushadi.
+    const kassa = (
+      await pool.query(
+        "SELECT wallet,amount_minor FROM cash_entries WHERE contract_id=$1 ORDER BY wallet",
+        [contract],
+      )
+    ).rows.map((r) => [r.wallet, Number(r.amount_minor)]);
+    assert.deepEqual(kassa, [
+      ["card_uzs", 400_000],
+      ["cash_usd", 50_000],
+      ["cash_uzs", 2_000_000],
+    ]);
+    const qoldiq = async () =>
+      Number(
+        (
+          await pool.query(
+            `SELECT c.total_cents-c.down_cents
+ -COALESCE((SELECT sum(p.applied_cents) FROM payments p WHERE p.contract_id=c.id
+   AND p.status='approved' AND p.voided_at IS NULL),0) sent
+ FROM contracts c WHERE c.id=$1`,
+            [contract],
+          )
+        ).rows[0].sent,
+      );
+    assert.equal(await qoldiq(), 35_000, "qolgan qarz 350 $");
+
+    // So'mda to'lov: kurs bilan dollarga o'tkaziladi.
+    const tolov = async (data: Record<string, unknown>) =>
+      post(
+        "payments",
+        { contractId: contract, requestKey: randomUUID(), ...data },
+        b1,
+        auth,
+      );
+    assert.equal((await tolov({ amount: 2_000_000, method: "cash" })).status, 400,
+      "kurssiz to‘lov qabul qilinmaydi");
+    assert.equal(
+      (await tolov({ amount: 2_000_000, method: "cash", rate: 12_000 })).status,
+      200,
+    );
+    assert.equal(await qoldiq(), 18_333, "2 mln so‘m 166,67 $ ni yopadi");
+
+    // Kurs ko'tarildi: qolgan 183,33 $ endi ko'proq so'm turadi, lekin
+    // dollardagi qarz o'sha-o'sha va aynan nolga tushadi.
+    assert.equal(
+      (await tolov({ amount: 2_291_625, method: "cash", rate: 12_500 })).status,
+      200,
+    );
+    assert.equal(await qoldiq(), 0, "qarz aynan nolga tushadi");
+    const somQoldiq = Number(
+      (
+        await pool.query(
+          "SELECT " +
+            "(CASE WHEN c.kind='qarz' THEN round((c.total_cents-c.down_cents" +
+            "-COALESCE((SELECT sum(p.applied_cents) FROM payments p WHERE p.contract_id=c.id" +
+            " AND p.status='approved' AND p.voided_at IS NULL),0))*c.sale_rate/100.0)::bigint" +
+            " ELSE 0 END) q FROM contracts c WHERE c.id=$1",
+          [contract],
+        )
+      ).rows[0].q,
+    );
+    assert.equal(somQoldiq, 0, "so‘mdagi qoldiq ham nol");
+
+    // Foyda hisobotida qarzga sotish alohida qatorda sanaladi, "nasiya"
+    // raqamiga qo'shib yuborilmaydi.
+    const oy = (
+      await pool.query(
+        "SELECT to_char((now() AT TIME ZONE 'Asia/Tashkent')::date,'YYYY-MM') oy",
+      )
+    ).rows[0].oy;
+    const html = await (
+      await fetch(origin + "/erp?branch=" + b1 + "&tab=profit&oy=" + oy, {
+        headers: { cookie: auth },
+      })
+    ).text();
+    assert.ok(
+      html.includes("qarzga 1"),
+      "foyda hisobotida qarzga sotish alohida ko‘rinsin",
+    );
+    assert.ok(html.includes("Qarzga sotish qoldig‘i"));
+    // Kurs farqi: 2-to'lov 12 500 kursda tushdi, qarzning so'mdagi
+    // kitob qiymati esa 12 000 sotuv kursida. Farq daromadga yoziladi.
+    //   1-to'lov: 2 000 000 − 16 667 sent × 120 = −40
+    //   2-to'lov: 2 291 625 − 18 333 sent × 120 = +91 665
+    assert.ok(
+      html.includes("91 625"),
+      "kurs farqi foyda hisobotida ko‘rinsin",
+    );
+    assert.ok(html.includes("Kurs farqi"));
+  },
+);
+
+test(
+  "HTTP: investor kapitali va oylik taqsimot (TZ 6.10)",
+  { skip: !connection },
+  async () => {
+    const auth = await login(admin + "@example.invalid");
+    const kassirAuth = await login(kassir + "@example.invalid");
+    const inv = (body: Record<string, unknown>, cookie = auth) =>
+      fetch(origin + "/api/investors", {
+        method: "POST",
+        headers: { cookie, origin, "content-type": "application/json" },
+        body: JSON.stringify({ branchId: b1, ...body }),
+      });
+    // Kassirda investor hisobiga yozish huquqi yo'q.
+    assert.equal(
+      (
+        await inv(
+          { action: "investor", name: "SYNTHETIC INV rad" },
+          kassirAuth,
+        )
+      ).status,
+      403,
+    );
+    const qosh = async (name: string) =>
+      (await (await inv({ action: "investor", name })).json()).id as string;
+    const a = await qosh("SYNTHETIC INV A");
+    const b = await qosh("SYNTHETIC INV B");
+    const kirim = (
+      investorId: string,
+      day: string,
+      amount: string,
+      kind = "capital",
+      form = "cash",
+    ) => inv({ action: "entry", investorId, day, amount, kind, form });
+    // A: 1000 $ 1-iyundan. B: 1000 $ 16-iyundan (15 kun ishlaydi).
+    assert.equal((await kirim(a, "2026-06-01", "1000")).status, 200);
+    assert.equal((await kirim(b, "2026-06-16", "1000")).status, 200);
+    // Qoldiqdan ortiq chiqarib bo'lmaydi.
+    assert.equal(
+      (await kirim(b, "2026-06-20", "5000", "return")).status,
+      400,
+    );
+
+    // Pul harakati kassaga ham tushadi: ikkinchi marta kiritish kerak
+    // emas. Dollarda kirgani naqd USD hamyoniga sentda tushadi.
+    const kassaYozuv = (
+      await pool.query(
+        `SELECT k.wallet,k.amount_minor,k.category,k.entry_date::text
+ FROM cash_entries k JOIN investor_entries e ON e.id=k.investor_entry_id
+ WHERE e.investor_id=$1`,
+        [a],
+      )
+    ).rows;
+    assert.equal(kassaYozuv.length, 1);
+    assert.equal(kassaYozuv[0].wallet, "cash_usd");
+    assert.equal(Number(kassaYozuv[0].amount_minor), 100_000);
+    assert.equal(kassaYozuv[0].category, "Investor kapitali");
+    assert.equal(kassaYozuv[0].entry_date, "2026-06-01");
+    // Kassaga tushgan yozuv bekor qilinmaydi - teskari yozuv kerak.
+    const pulYozuv = (
+      await pool.query(
+        "SELECT id FROM investor_entries WHERE investor_id=$1 LIMIT 1",
+        [a],
+      )
+    ).rows[0].id;
+    assert.equal(
+      (
+        await inv({
+          action: "void",
+          entryId: pulYozuv,
+          reason: "Kassaga tushgan yozuvni urinib ko‘ramiz",
+        })
+      ).status,
+      400,
+    );
+    // So'mdagi harakatda kurs majburiy.
+    assert.equal(
+      (
+        await inv({
+          action: "entry",
+          investorId: b,
+          day: "2026-06-18",
+          kind: "capital",
+          amount: "100",
+          wallet: "cash_uzs",
+        })
+      ).status,
+      400,
+    );
+
+    // Iyunni kunlik o'rtacha kapital bilan yopamiz: 300 $ taqsimlanadi.
+    // A ning kapital-kunlari 30 kun x 1000 $, B ning 15 kun x 1000 $ -
+    // nisbat 2:1, demak 200 $ va 100 $.
+    assert.equal(
+      (
+        await inv({
+          action: "close",
+          month: "2026-06",
+          rule: "daily",
+          profit: "300",
+          rate: 12_000,
+        })
+      ).status,
+      400,
+      "sababsiz qo‘lda raqam qabul qilinmaydi",
+    );
+    assert.equal(
+      (
+        await inv({
+          action: "close",
+          month: "2026-06",
+          rule: "daily",
+          profit: "300",
+          rate: 12_000,
+          overrideReason: "Iyun hisoboti qo‘lda tekshirildi",
+        })
+      ).status,
+      200,
+    );
+    // Hisoblashning o'zi ham muzlatiladi: nimadan chiqqani qoladi.
+    const muzlatilgan = (
+      await pool.query(
+        `SELECT rule,profit_cents,rate,share_bp,override_reason
+ FROM investor_months WHERE branch_id=$1 AND month='2026-06-01'`,
+        [b1],
+      )
+    ).rows[0];
+    assert.equal(muzlatilgan.rule, "daily");
+    assert.equal(Number(muzlatilgan.profit_cents), 30_000);
+    assert.equal(Number(muzlatilgan.rate), 12_000);
+    assert.equal(Number(muzlatilgan.share_bp), 8000);
+    assert.ok(muzlatilgan.override_reason.includes("qo‘lda tekshirildi"));
+    // Oy yopilganda foyda hisoboti ham muzlatiladi: keyingi tuzatishlar
+    // o'tgan oyning raqamini o'zgartirmaydi.
+    const snapshot = (
+      await pool.query(
+        "SELECT data,kurs FROM profit_snapshots WHERE branch_id=$1 AND month='2026-06-01'",
+        [b1],
+      )
+    ).rows[0];
+    assert.ok(snapshot, "yopilgan oyning hisoboti saqlanadi");
+    assert.equal(snapshot.data.oy, "2026-06");
+    assert.ok(
+      typeof snapshot.data.sofFoyda === "number",
+      "snapshot ichida sof foyda bor",
+    );
+    const iyun = await (
+      await fetch(origin + "/erp?branch=" + b1 + "&tab=profit&oy=2026-06", {
+        headers: { cookie: auth },
+      })
+    ).text();
+    assert.ok(iyun.includes("muzlatilgan"), "hisobotda muzlatilgani aytilsin");
+    const ulush = (
+      await pool.query(
+        `SELECT i.name,s.capital_days,s.cents FROM investor_shares s
+ JOIN investors i ON i.id=s.investor_id
+ WHERE s.branch_id=$1 AND s.month='2026-06-01' ORDER BY i.name`,
+        [b1],
+      )
+    ).rows.map((r) => [r.name, Number(r.capital_days), Number(r.cents)]);
+    assert.deepEqual(ulush, [
+      ["SYNTHETIC INV A", 3_000_000, 20_000],
+      ["SYNTHETIC INV B", 1_500_000, 10_000],
+    ]);
+    // Reinvestitsiya: ulush kapitalga qo'shiladi va KEYINGI oydan ishlaydi.
+    const hisoblangan = (
+      await pool.query(
+        `SELECT i.name,e.day::text,e.kind,e.cents FROM investor_entries e
+ JOIN investors i ON i.id=e.investor_id
+ WHERE e.branch_id=$1 AND e.form='accrual' ORDER BY i.name`,
+        [b1],
+      )
+    ).rows.map((r) => [r.name, r.day, r.kind, Number(r.cents)]);
+    assert.deepEqual(hisoblangan, [
+      ["SYNTHETIC INV A", "2026-07-01", "profit", 20_000],
+      ["SYNTHETIC INV B", "2026-07-01", "profit", 10_000],
+    ]);
+    // Bir oy ikki marta yopilmaydi.
+    assert.equal(
+      (
+        await inv({
+          action: "close",
+          month: "2026-06",
+          rule: "daily",
+          profit: "300",
+          rate: 12_000,
+          overrideReason: "Takroriy yopishga urinish",
+        })
+      ).status,
+      400,
+    );
+    // Hisoblangan yozuvni bekor qilib bo'lmaydi - oy muzlatilgan.
+    const accrual = (
+      await pool.query(
+        "SELECT id FROM investor_entries WHERE branch_id=$1 AND form='accrual' LIMIT 1",
+        [b1],
+      )
+    ).rows[0].id;
+    assert.equal(
+      (
+        await inv({
+          action: "void",
+          entryId: accrual,
+          reason: "Shunchaki urinib ko‘ramiz",
+        })
+      ).status,
+      400,
+    );
+    // Zarar ham xuddi shu formulada: kapitaldan ayriladi.
+    assert.equal(
+      (
+        await inv({
+          action: "close",
+          month: "2026-05",
+          rule: "daily",
+          profit: "-60",
+          rate: 12_000,
+          overrideReason: "Mayda kapital yo‘qligini tekshiramiz",
+        })
+      ).status,
+      400,
+      "mayda ishlagan kapital yo‘q edi",
+    );
+    const html = await (
+      await fetch(origin + "/erp?branch=" + b1 + "&tab=investors&oy=2026-06", {
+        headers: { cookie: auth },
+      })
+    ).text();
+    assert.ok(html.includes("SYNTHETIC INV A"));
+    assert.ok(html.includes("Oy ichida kunlik o‘rtacha"));
+    // Ko'rish huquqi yo'q rol bo'limni ochmaydi.
+    const yopiq = await (
+      await fetch(origin + "/erp?branch=" + b1 + "&tab=investors", {
+        headers: { cookie: await login(viewer + "@example.invalid") },
+      })
+    ).text();
+    assert.ok(yopiq.includes("huquqi yo‘q"));
+  },
+);
+
+test(
+  "HTTP: avansni mijozning boshqa shartnomasiga ko‘chirish (PAY-04)",
+  { skip: !connection },
+  async () => {
+    const auth = await login(admin + "@example.invalid");
+    const kassirAuth = await login(kassir + "@example.invalid");
+    const qurilma = async (imei: string) =>
+      (
+        await (
+          await post(
+            "inventory",
+            { imei, model: "SYNTHETIC AVANS", cost: 1_000_000 },
+            b1,
+            auth,
+          )
+        ).json()
+      ).id as string;
+    const shartnoma = async (
+      inventoryId: string,
+      pnfl: string,
+      priceUzs: number,
+    ) =>
+      (
+        await (
+          await post(
+            "contracts",
+            {
+              inventoryId,
+              customerName: "SYNTHETIC AVANS mijoz " + pnfl.slice(-1),
+              pnfl,
+              priceUzs,
+              downPayment: 500_000,
+              months: 1,
+              monthlyRateBp: 500,
+              startDate: "2026-10-01",
+            },
+            b1,
+            auth,
+          )
+        ).json()
+      ).id as string;
+    const PNFL = "55500011122";
+    const A = await shartnoma(await qurilma("766666666666661"), PNFL, 2_000_000);
+    const B = await shartnoma(await qurilma("766666666666662"), PNFL, 3_000_000);
+    // Boshqa mijozning shartnomasi - ko'chirish joyi bo'lmasligi kerak.
+    const C = await shartnoma(
+      await qurilma("766666666666663"),
+      "55500011133",
+      3_000_000,
+    );
+    const qarz = async (id: string) =>
+      Number(
+        (
+          await pool.query(
+            `SELECT ${"c.total-c.down_payment-COALESCE((SELECT sum(p.amount) FROM payments p WHERE p.contract_id=c.id AND p.status='approved' AND p.voided_at IS NULL),0)"} q
+ FROM contracts c WHERE c.id=$1`,
+            [id],
+          )
+        ).rows[0].q,
+      );
+    // A da qarz 1 575 000. 2 000 000 to'lanadi -> 425 000 avans.
+    assert.equal(await qarz(A), 1_575_000);
+    assert.equal(
+      (
+        await post(
+          "payments",
+          {
+            contractId: A,
+            amount: 2_000_000,
+            method: "cash",
+            requestKey: randomUUID(),
+          },
+          b1,
+          auth,
+        )
+      ).status,
+      200,
+    );
+    assert.equal(await qarz(A), 0);
+    const avans = (
+      await pool.query(
+        "SELECT id,amount-used_amount q FROM customer_advances WHERE contract_id=$1",
+        [A],
+      )
+    ).rows[0];
+    assert.equal(Number(avans.q), 425_000);
+
+    const kochir = (body: Record<string, unknown>, cookie = auth) =>
+      fetch(origin + "/api/advances", {
+        method: "POST",
+        headers: { cookie, origin, "content-type": "application/json" },
+        body: JSON.stringify({ branchId: b1, advanceId: avans.id, ...body }),
+      });
+    // Kassirda bu huquq yo'q: pulni bir shartnomadan ikkinchisiga
+    // ko'chirish rahbar qarori.
+    assert.equal(
+      (
+        await kochir(
+          { toContractId: B, amount: 100_000, reason: "Kassir urinadi" },
+          kassirAuth,
+        )
+      ).status,
+      403,
+    );
+    // Boshqa mijozning shartnomasiga o'tmaydi.
+    assert.equal(
+      (await kochir({ toContractId: C, amount: 100_000, reason: "Boshqa mijoz" }))
+        .status,
+      400,
+    );
+    // Qoldiqdan ortiq ko'chirilmaydi.
+    assert.equal(
+      (await kochir({ toContractId: B, amount: 900_000, reason: "Ortiq summa" }))
+        .status,
+      400,
+    );
+    const bOldin = await qarz(B);
+    assert.equal(
+      (
+        await kochir({
+          toContractId: B,
+          amount: 400_000,
+          reason: "Birinchi shartnoma yopildi, qoldiq ikkinchisiga",
+        })
+      ).status,
+      200,
+    );
+    assert.equal(await qarz(B), bOldin - 400_000, "maqsad qarzi kamayadi");
+    assert.equal(
+      Number(
+        (
+          await pool.query(
+            "SELECT amount-used_amount q FROM customer_advances WHERE id=$1",
+            [avans.id],
+          )
+        ).rows[0].q,
+      ),
+      25_000,
+      "avans qoldig‘i kamayadi",
+    );
+    // Kassaga yozuv tushmaydi: pul avans paydo bo'lgan kuni kirgan.
+    const yozuv = (
+      await pool.query(
+        `SELECT p.id,p.method,
+ (SELECT count(*) FROM cash_entries k WHERE k.payment_id=p.id) kassa
+ FROM payments p WHERE p.contract_id=$1 AND p.method='advance'`,
+        [B],
+      )
+    ).rows;
+    assert.equal(yozuv.length, 1);
+    assert.equal(Number(yozuv[0].kassa), 0, "kassaga ikkinchi marta kirmaydi");
+    // Qolgan 25 000 ni ham ko'chirsa avans tugaydi.
+    assert.equal(
+      (await kochir({ toContractId: B, amount: 25_000, reason: "Qoldig‘i ham" }))
+        .status,
+      200,
+    );
+    assert.equal(
+      (await kochir({ toContractId: B, amount: 1_000, reason: "Yana urinish" }))
+        .status,
+      400,
+      "tugagan avansdan ko‘chirilmaydi",
+    );
+  },
+);
+
+test(
+  "HTTP: minimal marja va sotuvchi bonusi (TZ SALE)",
+  { skip: !connection },
+  async () => {
+    const auth = await login(admin + "@example.invalid");
+    const kassirAuth = await login(kassir + "@example.invalid");
+    // Chegarani 15% qilib qo'yamiz: tannarx 1 000 000 -> marja kamida
+    // 150 000 bo'lishi kerak.
+    await pool.query(
+      "UPDATE nasiya_settings SET min_margin_bp=1500, seller_bonus_bp=300 WHERE branch_id=$1",
+      [b1],
+    );
+    const qurilma = async (imei: string) =>
+      (
+        await (
+          await post(
+            "inventory",
+            { imei, model: "SYNTHETIC NARX", cost: 1_000_000 },
+            b1,
+            auth,
+          )
+        ).json()
+      ).id as string;
+    const sot = (data: Record<string, unknown>, cookie = auth) =>
+      fetch(origin + "/api/sales", {
+        method: "POST",
+        headers: { cookie, origin, "content-type": "application/json" },
+        body: JSON.stringify({
+          branchId: b1,
+          requestKey: randomUUID(),
+          method: "cash",
+          seller: "SYNTHETIC BONUS sotuvchi",
+          ...data,
+        }),
+      });
+    // Marja 100 000 - chegaradan past, sababsiz o'tmaydi.
+    const past = await sot({
+      inventoryId: await qurilma("777777777777771"),
+      amount: 1_100_000,
+    });
+    assert.equal(past.status, 400);
+    assert.ok(
+      (await past.json()).error.includes("past"),
+      "xato sababi aytilsin",
+    );
+    // Kassirda past narxga ruxsat yo'q.
+    assert.equal(
+      (
+        await sot(
+          {
+            inventoryId: await qurilma("777777777777772"),
+            amount: 1_100_000,
+            priceOverrideReason: "Kassir urinib ko‘radi",
+          },
+          kassirAuth,
+        )
+      ).status,
+      400,
+    );
+    // Rahbar sababini yozib o'tkazadi va sabab yozuvda qoladi.
+    const ruxsat = await qurilma("777777777777773");
+    assert.equal(
+      (
+        await sot({
+          inventoryId: ruxsat,
+          amount: 1_100_000,
+          priceOverrideReason: "Ekrani chizilgan, tezroq sotish kerak",
+        })
+      ).status,
+      200,
+    );
+    const yozuv = (
+      await pool.query(
+        "SELECT price_override_reason r FROM cash_sales WHERE inventory_id=$1",
+        [ruxsat],
+      )
+    ).rows[0];
+    assert.ok(yozuv.r.includes("Ekrani chizilgan"));
+    // Chegaradan yuqori narx sababsiz o'tadi.
+    const yaxshi = await qurilma("777777777777774");
+    assert.equal(
+      (await sot({ inventoryId: yaxshi, amount: 1_200_000 })).status,
+      200,
+    );
+    assert.equal(
+      (
+        await pool.query(
+          "SELECT price_override_reason r FROM cash_sales WHERE inventory_id=$1",
+          [yaxshi],
+        )
+      ).rows[0].r,
+      null,
+      "normal narxda sabab yozilmaydi",
+    );
+    // Bonus: marjaning 3% i. 100 000 + 200 000 = 300 000 marja -> 9 000.
+    const oy = (
+      await pool.query(
+        "SELECT to_char((now() AT TIME ZONE 'Asia/Tashkent')::date,'YYYY-MM') oy",
+      )
+    ).rows[0].oy;
+    const html = await (
+      await fetch(origin + "/erp?branch=" + b1 + "&tab=profit&oy=" + oy, {
+        headers: { cookie: auth },
+      })
+    ).text();
+    assert.ok(html.includes("SYNTHETIC BONUS sotuvchi"));
+    assert.ok(html.includes("Bonus"), "bonus ustuni ko‘rinsin");
+    assert.ok(html.includes("9 000"), "bonus hisoblansin");
+    // Nasiyada ham ishlaydi: 1 000 000 tannarxli qurilma 1 100 000 ga
+    // sotilsa marja 100 000 - chegaradan past.
+    const nasiyaPast = await post(
+      "contracts",
+      {
+        inventoryId: await qurilma("777777777777775"),
+        customerName: "SYNTHETIC NARX mijoz",
+        priceUzs: 1_100_000,
+        downPayment: 100_000,
+        months: 3,
+        monthlyRateBp: 500,
+        startDate: "2026-10-01",
+      },
+      b1,
+      auth,
+    );
+    assert.equal(nasiyaPast.status, 400, "nasiyada ham chegara ishlaydi");
+    // Eski yo'l: faqat `total` berilsa ustama ajratilmaydi, ya'ni marjani
+    // to'g'ri o'lchab bo'lmaydi. Chegara yoqilgan bo'lsa rad etiladi.
+    const eskiYol = await post(
+      "contracts",
+      {
+        inventoryId: await qurilma("777777777777776"),
+        customerName: "SYNTHETIC NARX mijoz",
+        total: 2_000_000,
+        downPayment: 100_000,
+        months: 3,
+        startDate: "2026-10-01",
+      },
+      b1,
+      auth,
+    );
+    assert.equal(
+      eskiYol.status,
+      400,
+      "chegara yoqilganda qurilma narxi talab qilinadi",
+    );
+    // Chegarani qaytarib o'chiramiz.
+    await pool.query(
+      "UPDATE nasiya_settings SET min_margin_bp=0, seller_bonus_bp=0 WHERE branch_id=$1",
+      [b1],
+    );
+    // O'chirilgandan keyin eski yo'l yana ishlaydi.
+    assert.equal(
+      (
+        await post(
+          "contracts",
+          {
+            inventoryId: await qurilma("777777777777777"),
+            customerName: "SYNTHETIC NARX mijoz",
+            total: 2_000_000,
+            downPayment: 100_000,
+            months: 3,
+            startDate: "2026-10-01",
+          },
+          b1,
+          auth,
+        )
+      ).status,
+      200,
     );
   },
 );

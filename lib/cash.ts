@@ -2,6 +2,7 @@ import { createHash, randomUUID } from "node:crypto";
 import type { PoolClient } from "pg";
 import { scope, AccessDeniedError } from "./auth";
 import { transaction, db } from "./db";
+import { can, rollarAmal } from "./domain";
 import {
   cashSchema,
   cashVoidSchema,
@@ -16,12 +17,103 @@ type Scope = {
   role: string;
 };
 export class CashError extends Error {}
-async function wallets(c: Pick<PoolClient, "query">, s: Scope) {
+
+/** Toshkent vaqti bo'yicha bugungi sana, YYYY-MM-DD. */
+export async function bugun(c: Pick<PoolClient, "query">) {
+  return (
+    await c.query(
+      "SELECT (now() AT TIME ZONE 'Asia/Tashkent')::date::text today",
+    )
+  ).rows[0].today as string;
+}
+/**
+ * Yopilgan kunga yozuv kirmaydi (CASH-04).
+ *
+ * Nasiya to'lovi, xarid, qarz to'lovi va qo'lda kiritilgan harakat -
+ * hammasi shu tekshiruvdan o'tadi. Qayta ochilgan kun yana ochiq.
+ */
+export async function assertOpenDay(
+  c: Pick<PoolClient, "query">,
+  s: Scope,
+  day: string,
+) {
+  const yopilgan = (
+    await c.query(
+      `SELECT day::text FROM cash_closings
+ WHERE tenant_id=$1 AND branch_id=$2 AND reopened_at IS NULL AND day>=$3::date
+ ORDER BY day LIMIT 1`,
+      [s.tenant_id, s.branch_id, day],
+    )
+  ).rows[0];
+  if (yopilgan)
+    throw new CashError(
+      `${yopilgan.day} kuni kassa yopilgan: bu sanaga yozuv kiritilmaydi. Rahbar kunni qayta ochishi kerak.`,
+    );
+}
+
+/** Filialning to'rt hamyoni mavjud bo'lsin: ularga FK bog'lanishlar bor. */
+export async function wallets(c: Pick<PoolClient, "query">, s: Scope) {
   await c.query(
     "INSERT INTO cash_wallets(tenant_id,branch_id,wallet) SELECT $1,$2,w FROM unnest(ARRAY['cash_uzs','cash_usd','card_uzs','bank_uzs']) w ON CONFLICT DO NOTHING",
     [s.tenant_id, s.branch_id],
   );
 }
+/**
+ * Kirim uchun kassadan chiqim (TZ INV-02).
+ *
+ * Summa hamyonning o'z birligida: USD hamyonidan sent, so'm hamyonidan
+ * so'm chiqadi. Har kirimga bitta yozuv - bazada UNIQUE(inventory_id).
+ */
+export async function postPurchase(
+  c: Pick<PoolClient, "query">,
+  s: Scope,
+  inventoryId: string,
+  walletMinor: number,
+  wallet: Wallet,
+) {
+  if (!walletMinor) return;
+  await wallets(c, s);
+  await assertOpenDay(c, s, await bugun(c));
+  await c.query(
+    `INSERT INTO cash_entries(id,tenant_id,branch_id,wallet,entry_date,amount_minor,category,user_id,inventory_id)
+ VALUES($1,$2,$3,$4,(now() AT TIME ZONE 'Asia/Tashkent')::date,$5,'Telefon xaridi',$6,$7)`,
+    [
+      randomUUID(),
+      s.tenant_id,
+      s.branch_id,
+      wallet,
+      -walletMinor,
+      s.userId,
+      inventoryId,
+    ],
+  );
+}
+
+/** Yetkazib beruvchiga qarz to'lovi uchun kassadan chiqim (TZ SUP). */
+export async function postSettlement(
+  c: Pick<PoolClient, "query">,
+  s: Scope,
+  settlementId: string,
+  walletMinor: number,
+  wallet: Wallet,
+) {
+  await wallets(c, s);
+  await assertOpenDay(c, s, await bugun(c));
+  await c.query(
+    `INSERT INTO cash_entries(id,tenant_id,branch_id,wallet,entry_date,amount_minor,category,user_id,settlement_id)
+ VALUES($1,$2,$3,$4,(now() AT TIME ZONE 'Asia/Tashkent')::date,$5,'Yetkazib beruvchiga qarz to‘lovi',$6,$7)`,
+    [
+      randomUUID(),
+      s.tenant_id,
+      s.branch_id,
+      wallet,
+      -walletMinor,
+      s.userId,
+      settlementId,
+    ],
+  );
+}
+
 export async function postCashReceipt(
   c: Pick<PoolClient, "query">,
   s: Scope,
@@ -30,8 +122,11 @@ export async function postCashReceipt(
   method: string,
   kind: "payment" | "down",
 ) {
+  // `amount` - hamyonning o'z birligida: USD hamyoniga sent, so'm
+  // hamyoniga so'm tushadi (tushumMinor).
   if (!amount) return;
   await wallets(c, s);
+  await assertOpenDay(c, s, await bugun(c));
   await c.query(
     `INSERT INTO cash_entries(id,tenant_id,branch_id,wallet,entry_date,amount_minor,category,user_id,${kind === "payment" ? "payment_id" : "contract_id"}) VALUES($1,$2,$3,$4,(now() AT TIME ZONE 'Asia/Tashkent')::date,$5,$6,$7,$8)`,
     [
@@ -48,7 +143,7 @@ export async function postCashReceipt(
 }
 export async function mutateCash(raw: unknown) {
   const v = cashSchema.parse(raw),
-    s = await scope(v.branchId, true);
+    s = await scope(v.branchId, "cash.entry");
   let amount: number;
   try {
     amount = minorUnits(v.amount, v.wallet, v.action === "opening");
@@ -62,8 +157,8 @@ export async function mutateCash(raw: unknown) {
     );
     const role = (
       await c.query(
-        "SELECT role FROM memberships WHERE user_id=$1 AND tenant_id=$2 AND branch_id=$3 AND role IN ('admin','cashier')",
-        [s.userId, s.tenant_id, s.branch_id],
+        "SELECT role FROM memberships WHERE user_id=$1 AND tenant_id=$2 AND branch_id=$3 AND role=ANY($4)",
+        [s.userId, s.tenant_id, s.branch_id, rollarAmal("cash.entry")],
       )
     ).rows[0]?.role;
     if (!role || (v.action === "opening" && role !== "admin"))
@@ -74,6 +169,7 @@ export async function mutateCash(raw: unknown) {
       )
     ).rows[0].today;
     if (v.date > today) throw new CashError("Kelajak sanasini kiritmang");
+    if (v.action !== "opening") await assertOpenDay(c, s, v.date);
     if (
       v.action === "transfer" &&
       (v.wallet === v.destination ||
@@ -183,11 +279,26 @@ export async function readCash(branchId: string, requestedPage: number) {
       [s.tenant_id, s.branch_id, (page - 1) * 20],
     )
   ).rows;
-  return { balances, entries, today, total, page, pages };
+  // Shu oyning chiqimlari kategoriya bo'yicha. Valyutalar qo'shilmaydi:
+  // so'm va dollar alohida ustun (TZ 4.4).
+  const expenses = (
+    await db.query(
+      `SELECT category,
+ COALESCE(sum(CASE WHEN wallet<>'cash_usd' THEN -amount_minor END),0)::text uzs,
+ COALESCE(sum(CASE WHEN wallet='cash_usd' THEN -amount_minor END),0)::text usd
+ FROM cash_entries
+ WHERE tenant_id=$1 AND branch_id=$2 AND amount_minor<0
+ AND entry_date>=date_trunc('month',$3::date)::date AND entry_date<=$3::date
+ AND category<>'Hamyonlar orasida o‘tkazma'
+ GROUP BY category ORDER BY 2 DESC,category`,
+      [s.tenant_id, s.branch_id, today],
+    )
+  ).rows;
+  return { balances, entries, today, total, page, pages, expenses };
 }
 export async function reverseCash(raw: unknown) {
   const v = cashVoidSchema.parse(raw),
-    s = await scope(v.branchId, true);
+    s = await scope(v.branchId, "cash.reverse");
   return transaction(async (c) => {
     await c.query(
       "SELECT id FROM branches WHERE tenant_id=$1 AND id=$2 FOR UPDATE",
@@ -199,7 +310,8 @@ export async function reverseCash(raw: unknown) {
         [s.userId, s.tenant_id, s.branch_id],
       )
     ).rows[0]?.role;
-    if (role !== "admin") throw new AccessDeniedError();
+    if (!can(role, "cash.reverse")) throw new AccessDeniedError();
+    await assertOpenDay(c, s, await bugun(c));
     const hash = createHash("sha256")
       .update(JSON.stringify({ action: "reverse", ...v }))
       .digest("hex");
@@ -269,4 +381,42 @@ export async function reverseCash(raw: unknown) {
     );
     return v.requestKey;
   });
+}
+
+/**
+ * Investor kapitalining pul tomoni (TZ 6.10).
+ *
+ * Kirim musbat, qaytarim va daromad olish manfiy. `amount` hamyonning
+ * o'z birligida: USD hamyoniga sent, so'm hamyoniga so'm. Tovar
+ * ko'rinishidagi kapital bu yerga umuman kelmaydi - pul harakati yo'q.
+ *
+ * Kategoriya foyda hisobotiga qarab tanlanadi: investorga berilgan pul
+ * xarajat emas, foyda taqsimoti - "Investorga to'lov" shu ro'yxatda.
+ */
+export async function postInvestorCash(
+  c: Pick<PoolClient, "query">,
+  s: Scope,
+  entryId: string,
+  day: string,
+  amount: number,
+  wallet: Wallet,
+) {
+  if (!amount) return;
+  await wallets(c, s);
+  await assertOpenDay(c, s, day);
+  await c.query(
+    `INSERT INTO cash_entries(id,tenant_id,branch_id,wallet,entry_date,amount_minor,
+ category,user_id,investor_entry_id) VALUES($1,$2,$3,$4,$5::date,$6,$7,$8,$9)`,
+    [
+      randomUUID(),
+      s.tenant_id,
+      s.branch_id,
+      wallet,
+      day,
+      amount,
+      amount > 0 ? "Investor kapitali" : "Investorga to‘lov",
+      s.userId,
+      entryId,
+    ],
+  );
 }

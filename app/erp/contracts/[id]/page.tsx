@@ -9,6 +9,13 @@ import {
   type SearchParams,
 } from "../../../../lib/filters";
 import { RecordForm } from "../../record-form";
+import { can } from "../../../../lib/domain";
+import { readClosure } from "../../../../lib/closure";
+import { readCustomer } from "../../../../lib/customer";
+import { CustomerPanel } from "../../customer-panel";
+import { readControl } from "../../../../lib/device-control";
+import { ControlPanel } from "../../control-panel";
+import { ClosurePanel } from "../../closure-panel";
 import { PaymentHistory } from "../../payment-history";
 export const dynamic = "force-dynamic";
 export default async function ContractPage({
@@ -42,6 +49,9 @@ export default async function ContractPage({
     to: "",
   };
   const history = await readPaymentHistory(branch, filters, id);
+  const closure = await readClosure(branch, id);
+  const mijoz = c.customer_id ? await readCustomer(branch, c.customer_id) : null;
+  const nazorat = await readControl(branch, id);
   return (
     <>
       <header>
@@ -58,10 +68,29 @@ export default async function ContractPage({
         <h1>{c.customer_label}</h1>
         <p className="contractid">
           Shartnoma ID: <code>{c.id}</code>
+          {c.number ? (
+            <>
+              {" · "}
+              <a
+                href={"/erp/contracts/" + c.id + "/shartnoma?branch=" + branch}
+                target="_blank"
+                rel="noopener"
+              >
+                {c.number} - sonli shartnomani chop etish
+              </a>
+            </>
+          ) : null}
         </p>
         <aside className="notice">
           Excel va Kassa hisob-kitoblariga moslik auditdan o‘tmagan.
         </aside>
+        {mijoz ? (
+          <CustomerPanel
+            branchId={branch}
+            mijoz={mijoz}
+            canBlock={can(detail.role, "customer.block")}
+          />
+        ) : null}
         <section className="detailsection">
           <h2>Qurilma va shartnoma</h2>
           <dl>
@@ -73,6 +102,17 @@ export default async function ContractPage({
             <dd>{dateOnly(c.start_date)}</dd>
             <dt>Muddat</dt>
             <dd>{c.months} oy</dd>
+            {c.markup === null ? null : (
+              <>
+                <dt>Ustama</dt>
+                <dd>
+                  {money(c.markup)}
+                  {Number(c.monthly_rate_bp)
+                    ? ` (oyiga ${Number(c.monthly_rate_bp) / 100}%)`
+                    : ""}
+                </dd>
+              </>
+            )}
             <dt>Holat</dt>
             <dd>{Number(c.balance) > 0 ? "Qarzi bor" : "To‘liq to‘langan"}</dd>
           </dl>
@@ -98,6 +138,13 @@ export default async function ContractPage({
             <h2>Qolgan qarz</h2>
             <strong>{money(c.balance)}</strong>
           </section>
+          {Number(c.advance) > 0 ? (
+            <section>
+              <h2>Mijoz avansi</h2>
+              <strong>{money(c.advance)}</strong>
+              <p>Qarzdan ortib tushgan pul; qarz hisobiga kirmaydi.</p>
+            </section>
+          ) : null}
         </div>
         <h2>Oylik jadval</h2>
         <table>
@@ -122,18 +169,35 @@ export default async function ContractPage({
           Bu kelishilgan jadval. To‘lovlarni aniq oylarga taqsimlash hali
           qo‘shilmagan.
         </p>
-        {detail.role !== "viewer" && Number(c.balance) > 0 ? (
+        {can(detail.role, "payment.create") && Number(c.balance) > 0 ? (
           <>
             <h2>To‘lov kiritish</h2>
             <RecordForm
               branchId={branch}
               kind="payments"
+              kurs={detail.kurs}
               selectedId={id}
               items={[
                 { id, label: c.customer_label + " / " + money(c.balance) },
               ]}
             />
           </>
+        ) : null}
+        <ControlPanel
+          branchId={branch}
+          contractId={id}
+          state={c.control_state}
+          history={nazorat.history}
+          canControl={nazorat.canControl}
+          debtLeft={Number(c.balance) > 0}
+        />
+        {closure.canClose && (Number(c.balance) > 0 || closure.done) ? (
+          <ClosurePanel
+            branchId={branch}
+            contractId={id}
+            quote={closure.quote}
+            done={closure.done}
+          />
         ) : null}
         <h2>To‘lov tarixi</h2>
         <PaymentHistory

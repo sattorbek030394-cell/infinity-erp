@@ -2,7 +2,8 @@ import { redirect } from "next/navigation";
 import { z } from "zod";
 import { currentUser } from "../../lib/auth";
 import { db } from "../../lib/db";
-import { readBranch } from "../../lib/service";
+import { readBranch, kirimRoyxatlari } from "../../lib/service";
+import { can, rollarAmal } from "../../lib/domain";
 import { readPaymentHistory } from "../../lib/history";
 import {
   matchesSearch,
@@ -17,8 +18,24 @@ import { readArrears } from "../../lib/arrears";
 import { ArrearsList } from "./arrears-list";
 import { readCash } from "../../lib/cash";
 import { CashPanel } from "./cash-panel";
+import { readClosings } from "../../lib/cash-closing";
+import { ClosingPanel } from "./closing-panel";
 import { readSales } from "../../lib/sales";
 import { SalesPanel } from "./sales-panel";
+import { readPending } from "../../lib/payment-approval";
+import { ApprovalsPanel } from "./approvals-panel";
+import { readClosures } from "../../lib/closure";
+import { ClosuresPanel } from "./closures-panel";
+import { readSuppliers } from "../../lib/supplier";
+import { SuppliersPanel } from "./suppliers-panel";
+import { readProfit } from "../../lib/profit";
+import { readProfitDetail } from "../../lib/profit-detail";
+import { readAdvances } from "../../lib/advance";
+import { AdvancePanel } from "./advance-panel";
+import { ProfitDetailPanel } from "./profit-detail-panel";
+import { readInvestors, investorRoyxati } from "../../lib/investor";
+import { InvestorPanel } from "./investor-panel";
+import { ProfitPanel } from "./profit-panel";
 import { cashMoney } from "../../lib/cash-domain";
 export const dynamic = "force-dynamic";
 export default async function ERP({
@@ -30,8 +47,8 @@ export default async function ERP({
   if (!user) redirect("/login");
   const branches = (
     await db.query(
-      "SELECT b.id,b.name FROM branches b JOIN memberships m ON m.branch_id=b.id AND m.tenant_id=b.tenant_id WHERE m.user_id=$1 AND m.role IN ('admin','cashier','viewer') ORDER BY b.name",
-      [user.id],
+      "SELECT b.id,b.name FROM branches b JOIN memberships m ON m.branch_id=b.id AND m.tenant_id=b.tenant_id WHERE m.user_id=$1 AND m.role=ANY($2) ORDER BY b.name",
+      [user.id, rollarAmal("read")],
     )
   ).rows;
   if (!branches.length)
@@ -62,10 +79,16 @@ export default async function ERP({
       "dashboard",
       "inventory",
       "contracts",
+      "qarz",
       "payments",
+      "approvals",
+      "closures",
       "arrears",
       "cash",
       "sales",
+      "suppliers",
+      "profit",
+      "investors",
     ].includes(query.tab)
       ? query.tab
       : "dashboard";
@@ -78,10 +101,55 @@ export default async function ERP({
   const data = await readBranch(branch);
   const arrears = tab === "arrears" ? await readArrears(branch) : null;
   const cash = tab === "cash" ? await readCash(branch, filters.page) : null;
+  const closings = tab === "cash" ? await readClosings(branch) : null;
   const sales = tab === "sales" ? await readSales(branch, filters) : null;
+  const pending = tab === "approvals" ? await readPending(branch) : null;
+  const advances = tab === "payments" ? await readAdvances(branch) : null;
+  const closures = tab === "closures" ? await readClosures(branch) : null;
+  const suppliers = tab === "suppliers" ? await readSuppliers(branch) : null;
+  // Foyda raqamining tafsiloti: ?tafsil=marja|ustama|kursfarqi|xarajat
+  const tafsil =
+    tab === "profit" && typeof query.tafsil === "string" && query.tafsil
+      ? await readProfitDetail(
+          branch,
+          typeof query.oy === "string" ? query.oy : "",
+          query.tafsil,
+        )
+      : null;
+  const profit =
+    tab === "profit" && !tafsil
+      ? await readProfit(
+          branch,
+          typeof query.oy === "string" ? query.oy : "",
+        )
+      : null;
+  // Investor kapitali: ko'rish huquqi bo'lmasa bo'lim ochilmaydi.
+  const investors =
+    tab === "investors" && can(data.role, "investor.read")
+      ? await readInvestors(
+          branch,
+          typeof query.oy === "string" ? query.oy : "",
+        )
+      : null;
+  // Kirim formasidagi "investor tovari" tanlovi uchun ismlar ro'yxati.
+  const investorNomlari =
+    tab === "inventory" ? await investorRoyxati(branch) : [];
+  // Kirim formasidagi "Yetkazib beruvchi" va "Qabul qiluvchi" tanlovlari.
+  const kirimRoyxat =
+    tab === "inventory"
+      ? await kirimRoyxatlari(branch)
+      : { taminotchilar: [], qabulQiluvchilar: [] };
   const items = data.items.filter(
     (i) =>
-      matchesSearch(filters.q, i.model, i.imei) &&
+      matchesSearch(
+        filters.q,
+        i.brand,
+        i.model,
+        i.memory,
+        i.color,
+        i.imei,
+        i.imei2,
+      ) &&
       (!["available", "sold"].includes(status) || i.status === status),
   );
   const contracts = data.contracts.filter(
@@ -137,10 +205,16 @@ export default async function ERP({
             ["dashboard", "Dashboard"],
             ["inventory", "Ombor"],
             ["contracts", "Nasiya"],
+            ["qarz", "Qarzga sotish"],
             ["payments", "To‘lovlar"],
+            ["approvals", "Tasdiq kutayotgan"],
+            ["closures", "Erta yopilgan"],
             ["arrears", "Qarzdorlar"],
             ["cash", "Kassa"],
             ["sales", "Naqd savdo"],
+            ["suppliers", "Ta‘minotchilar"],
+            ["profit", "Foyda"],
+            ["investors", "Investorlar"],
           ].map(([key, label]) => (
             <a
               className={tab === key ? "active" : ""}
@@ -169,7 +243,17 @@ export default async function ERP({
           />
         ) : null}
         {cash ? (
-          <CashPanel report={cash} branch={branch} role={data.role} />
+          <>
+            <CashPanel report={cash} branch={branch} role={data.role} />
+            {closings ? (
+              <ClosingPanel
+                branchId={branch}
+                report={closings}
+                today={cash.today}
+                balances={cash.balances}
+              />
+            ) : null}
+          </>
         ) : null}
         {sales ? (
           <SalesPanel
@@ -211,6 +295,36 @@ export default async function ERP({
                 </strong>
                 <p>Boshlang‘ich va keyingi to‘lovlar. Kassa balansi emas.</p>
               </section>
+              {Number(data.inTransit.n) > 0 ? (
+                <section>
+                  <h2>Undiruvchi qo‘lida</h2>
+                  <strong>{money(data.inTransit.total)}</strong>
+                  <p>
+                    {data.inTransit.n} ta naqd tushum kassir tasdig‘ini
+                    kutmoqda. Kassa qoldig‘iga kirmagan.
+                  </p>
+                </section>
+              ) : null}
+              {data.unreleased > 0 ? (
+                <section>
+                  <h2>Nazorat ochilmagan</h2>
+                  <strong>{data.unreleased}</strong>
+                  <p>
+                    Qarzi yopilgan, lekin iCloud/MDM nazorati hali
+                    chiqarilmagan qurilmalar.
+                  </p>
+                </section>
+              ) : null}
+              {Number(data.advances) > 0 ? (
+                <section>
+                  <h2>Mijoz avanslari</h2>
+                  <strong>{money(data.advances)}</strong>
+                  <p>
+                    Qarzdan ortib tushgan pul. Qarz hisobiga kirmaydi, mijoz
+                    hisobida turadi.
+                  </p>
+                </section>
+              ) : null}
             </div>
             <section>
               <h2>Naqd savdo tushumi</h2>
@@ -224,8 +338,16 @@ export default async function ERP({
         {tab === "inventory" ? (
           <>
             <h1>Ombor</h1>
-            {data.role !== "viewer" && (
-              <RecordForm branchId={branch} kind="inventory" items={[]} />
+            {can(data.role, "inventory.create") && (
+              <RecordForm
+                branchId={branch}
+                kind="inventory"
+                items={[]}
+                kurs={data.kurs}
+                investors={investorNomlari}
+                suppliers={kirimRoyxat.taminotchilar}
+                receivers={kirimRoyxat.qabulQiluvchilar}
+              />
             )}
             <SearchForm
               branchId={branch}
@@ -237,24 +359,60 @@ export default async function ERP({
             <table>
               <thead>
                 <tr>
-                  <th>Model</th>
+                  <th>Qurilma</th>
                   <th>IMEI</th>
                   <th>Tannarx</th>
+                  <th>Prognoz narx</th>
                   <th>Holat</th>
                 </tr>
               </thead>
               <tbody>
                 {items.map((i) => (
                   <tr key={i.id}>
-                    <td>{i.model}</td>
-                    <td>{i.imei}</td>
-                    <td>{money(i.cost)}</td>
+                    <td>
+                      {[i.brand, i.model, i.memory, i.color]
+                        .filter(Boolean)
+                        .join(" ")}
+                      {i.condition || i.battery ? (
+                        <small>
+                          {[
+                            i.condition,
+                            i.battery ? "batareyka " + i.battery + "%" : "",
+                          ]
+                            .filter(Boolean)
+                            .join(" • ")}
+                        </small>
+                      ) : null}
+                    </td>
+                    <td>
+                      {i.imei}
+                      {i.imei2 ? <small>{i.imei2}</small> : null}
+                    </td>
+                    <td>
+                      {money(i.cost)}
+                      {i.cost_usd_cents ? (
+                        <small>
+                          {cashMoney(i.cost_usd_cents, "cash_usd")} ×{" "}
+                          {money(i.cost_rate)}
+                        </small>
+                      ) : null}
+                    </td>
+                    <td>
+                      {i.expected_price_usd_cents
+                        ? cashMoney(i.expected_price_usd_cents, "cash_usd")
+                        : i.expected_price
+                          ? money(i.expected_price)
+                          : "—"}
+                      {i.expected_price_usd_cents && i.expected_price ? (
+                        <small>{money(i.expected_price)}</small>
+                      ) : null}
+                    </td>
                     <td>{i.status === "available" ? "Omborda" : "Sotilgan"}</td>
                   </tr>
                 ))}
                 {!items.length ? (
                   <tr>
-                    <td colSpan={4}>
+                    <td colSpan={5}>
                       Qurilma topilmadi. Qidiruv yoki holat filtrini
                       o‘zgartiring.
                     </td>
@@ -264,10 +422,34 @@ export default async function ERP({
             </table>
           </>
         ) : null}
+        {tab === "qarz" ? (
+          <>
+            <h1>Qarzga sotish</h1>
+            {can(data.role, "credit.sale") ? (
+              <RecordForm
+                branchId={branch}
+                kind="qarz"
+                kurs={data.kurs ? String(data.kurs) : ""}
+                items={data.items
+                  .filter((i) => i.status === "available")
+                  .map((i) => ({ id: i.id, label: i.model + " / " + i.imei }))}
+              />
+            ) : (
+              <p className="notice">
+                Qarzga sotish huquqi faqat rahbar va administratorda.
+              </p>
+            )}
+            <p>
+              Ustama va grafik yo‘q: mijoz bir necha hamyonga bo‘lib
+              to‘laydi, qolgani dollardagi qarz bo‘lib Qarzdorlarga
+              tushadi. Muddat o‘tsa kechikkan bo‘lib ko‘rinadi.
+            </p>
+          </>
+        ) : null}
         {tab === "contracts" ? (
           <>
             <h1>Nasiya shartnomalari</h1>
-            {data.role !== "viewer" && (
+            {can(data.role, "contract.create") && (
               <RecordForm
                 branchId={branch}
                 kind="contracts"
@@ -339,10 +521,18 @@ export default async function ERP({
         {tab === "payments" && history ? (
           <>
             <h1>To‘lovlar</h1>
-            {data.role !== "viewer" && (
+            {advances ? (
+              <AdvancePanel
+                branchId={branch}
+                rows={advances}
+                canMove={can(data.role, "payment.approve.transfer")}
+              />
+            ) : null}
+            {can(data.role, "payment.create") && (
               <RecordForm
                 branchId={branch}
                 kind="payments"
+                kurs={data.kurs}
                 items={data.contracts
                   .filter((c) => Number(c.balance) > 0)
                   .map((c) => ({
@@ -362,6 +552,39 @@ export default async function ERP({
               branchId={branch}
               url={historyUrl}
             />
+          </>
+        ) : null}
+        {tab === "approvals" && pending ? (
+          <>
+            <h1>Tasdiq kutayotgan tushumlar</h1>
+            <ApprovalsPanel branchId={branch} pending={pending} />
+          </>
+        ) : null}
+        {tab === "investors" ? (
+          investors ? (
+            <InvestorPanel branchId={branch} data={investors} />
+          ) : (
+            <p className="notice">
+              Investor hisobini ko‘rish huquqi yo‘q.
+            </p>
+          )
+        ) : null}
+        {tab === "profit" && tafsil ? (
+          <ProfitDetailPanel data={tafsil} branch={branch} />
+        ) : null}
+        {tab === "profit" && profit ? (
+          <ProfitPanel report={profit} branch={branch} />
+        ) : null}
+        {tab === "suppliers" && suppliers ? (
+          <>
+            <h1>Yetkazib beruvchilar va qarzlar</h1>
+            <SuppliersPanel branchId={branch} report={suppliers} />
+          </>
+        ) : null}
+        {tab === "closures" && closures ? (
+          <>
+            <h1>Muddatidan oldin yopilgan shartnomalar</h1>
+            <ClosuresPanel report={closures} branchId={branch} />
           </>
         ) : null}
       </main>

@@ -1,7 +1,7 @@
 import { cookies, headers } from "next/headers";
 import { createHash } from "node:crypto";
 import { db } from "./db";
-import { authorize } from "./domain";
+import { authorize, type Amal } from "./domain";
 export const digest = (token: string) =>
   createHash("sha256").update(token).digest("hex");
 export class AccessDeniedError extends Error {}
@@ -14,7 +14,10 @@ export async function currentUser() {
   );
   return r.rows[0] ?? null;
 }
-export async function scope(branchId: string, write = false) {
+export async function scope(
+  branchId: string,
+  amal: Amal | boolean = "read",
+) {
   const user = await currentUser();
   if (!user) throw new AccessDeniedError("Avval tizimga kiring");
   const r = await db.query(
@@ -24,7 +27,7 @@ export async function scope(branchId: string, write = false) {
   const membership = r.rows[0];
   if (!membership) throw new AccessDeniedError("Filialga ruxsat yo‘q");
   try {
-    authorize(membership.role, write);
+    authorize(membership.role, amal);
   } catch {
     throw new AccessDeniedError("Filialga ruxsat yo‘q");
   }

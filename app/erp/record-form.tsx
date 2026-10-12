@@ -1,20 +1,148 @@
 "use client";
 import { useRef, useState } from "react";
 import { useRouter } from "next/navigation";
+import { nasiyaTotals, SIM_TURLARI } from "../../lib/domain";
+import { money } from "../../lib/filters";
+
+// Tanlov ro'yxatida "yangi nom qo'shish" bandi.
+const YANGI = "__yangi__";
+
+/** Kirimdagi bo'sh qolgan majburiy maydonlar (server ham tekshiradi). */
+function kirimBoshMaydonlar(d: Record<string, string>) {
+  const bor = (k: string) => (d[k] ?? "").trim() !== "";
+  const bosh: string[] = [];
+  const talab: [string, string][] = [
+    ["model", "Model"],
+    ["imei", "IMEI yoki seriya raqami"],
+    ["condition", "Qurilma holati"],
+    ["purchaseDate", "Kirim sanasi"],
+    ["costUsd", "Tannarx USD"],
+    ["costRate", "Kirim kursi"],
+    ["expectedPriceUsd", "Prognoz sotuv narxi USD"],
+    ["simType", "SIM turi"],
+    ["supplier", "Yetkazib beruvchi"],
+    ["receivedBy", "Qabul qiluvchi"],
+    ["purchaseMethod", "To‘lov turi"],
+  ];
+  for (const [k, nom] of talab) if (!bor(k)) bosh.push(nom);
+  if (d.condition === "B/U" && !bor("battery"))
+    bosh.push("Batareyka % (B/U uchun)");
+  if (d.purchaseMethod === "investor" && !bor("investorId"))
+    bosh.push("Kimning tovari");
+  return bosh;
+}
 export function RecordForm({
   branchId,
   kind,
   items,
   selectedId,
+  kurs = "",
+  investors = [],
+  suppliers = [],
+  receivers = [],
 }: {
   branchId: string;
   kind: string;
   items: { id: string; label: string }[];
   selectedId?: string;
+  kurs?: string;
+  investors?: { id: string; name: string }[];
+  suppliers?: string[];
+  receivers?: string[];
 }) {
   const router = useRouter();
   const [message, setMessage] = useState("");
   const [busy, setBusy] = useState(false);
+  // Sotuvchi raqamni kiritayotganda ustama va oylik to'lov darhol ko'rinadi:
+  // mijozga aytiladigan summa shu, qo'lda hisoblash kerak emas.
+  const [hisob, setHisob] = useState<ReturnType<typeof nasiyaTotals> | null>(
+    null,
+  );
+  // To'lov usuli: USD tanlansa dollar va kurs so'raladi, so'm summasini
+  // dastur hisoblaydi (PAY-02).
+  const [usul, setUsul] = useState("cash");
+  const [som, setSom] = useState(0);
+  // Kirimda xarid turi: "investor tovari" tanlansa qaysi investor
+  // ekanini ham so'raymiz.
+  const [xarid, setXarid] = useState("");
+  // Kirim: qurilma holati (Yangi bo'lsa batareyka yozilmaydi), yangi
+  // ta'minotchi / qabul qiluvchi qo'lda yoziladimi, prognoz narx so'mda
+  // va aralash to'lov jami.
+  const [holat, setHolat] = useState("");
+  const [yangiTaminotchi, setYangiTaminotchi] = useState(false);
+  const [yangiQabul, setYangiQabul] = useState(false);
+  const [prognozSom, setPrognozSom] = useState(0);
+  const [aralashJami, setAralashJami] = useState(0);
+  // Qarzga sotishda sotuvchi raqam kiritayotganda qolgan qarz darhol
+  // ko'rinadi - mijozga aytiladigan summa shu.
+  const [qarz, setQarz] = useState<{
+    narx: number;
+    tushdi: number;
+    qoldiqUsd: number;
+    qoldiqSom: number;
+  } | null>(null);
+  function hisobla(form: HTMLFormElement) {
+    const d = Object.fromEntries(new FormData(form)) as Record<string, string>;
+    // USD summasi va kurs berilsa so'mdagi qiymat darhol ko'rinadi.
+    if (kind === "payments" || kind === "inventory") {
+      const usd = Number(kind === "payments" ? d.usdAmount : d.costUsd),
+        kurs = Number(kind === "payments" ? d.rate : d.costRate);
+      setSom(usd > 0 && kurs > 0 ? Math.round(usd * kurs) : 0);
+      if (kind === "inventory") {
+        setXarid(d.purchaseMethod ?? "");
+        setHolat(d.condition ?? "");
+        setYangiTaminotchi(d.supplier === YANGI);
+        setYangiQabul(d.receivedBy === YANGI);
+        const prognoz = Number(d.expectedPriceUsd);
+        setPrognozSom(
+          prognoz > 0 && kurs > 0 ? Math.round(prognoz * kurs) : 0,
+        );
+        setAralashJami(
+          Math.round(Number(d.mixUsd || 0) * (kurs || 0)) +
+            Number(d.mixCash || 0) +
+            Number(d.mixCard || 0) +
+            Number(d.mixBank || 0),
+        );
+      }
+      return;
+    }
+    if (kind === "qarz") {
+      const kurs = Number(d.rate || 0),
+        narxUsd = Number(d.priceUsd || 0);
+      const tushdiUsd =
+        Number(d.tolUsd || 0) +
+        (kurs > 0
+          ? (Number(d.tolSom || 0) +
+              Number(d.tolKarta || 0) +
+              Number(d.tolBank || 0)) /
+            kurs
+          : 0);
+      setQarz(
+        kurs > 0 && narxUsd > 0
+          ? {
+              narx: Math.round(narxUsd * kurs),
+              tushdi: Math.round(tushdiUsd * kurs),
+              qoldiqUsd: narxUsd - tushdiUsd,
+              qoldiqSom: Math.round((narxUsd - tushdiUsd) * kurs),
+            }
+          : null,
+      );
+      return;
+    }
+    if (kind !== "contracts") return;
+    try {
+      setHisob(
+        nasiyaTotals(
+          Number(d.priceUzs),
+          Number(d.downPayment || 0),
+          Number(d.months),
+          Math.round(Number(d.rateFoiz || 0) * 100),
+        ),
+      );
+    } catch {
+      setHisob(null);
+    }
+  }
   const key = useRef<string | null>(null);
   const lastPayload = useRef<string | null>(null);
   async function submit(e: React.FormEvent<HTMLFormElement>) {
@@ -22,7 +150,46 @@ export function RecordForm({
     if (busy) return;
     setBusy(true);
     const form = e.currentTarget;
-    const data = Object.fromEntries(new FormData(form));
+    const data = Object.fromEntries(new FormData(form)) as Record<
+      string,
+      string
+    >;
+    if (kind === "inventory") {
+      // "Yangi..." tanlansa qo'lda yozilgan nom yuboriladi.
+      if (data.supplier === YANGI) data.supplier = data.supplierNew ?? "";
+      if (data.receivedBy === YANGI) data.receivedBy = data.receivedByNew ?? "";
+      delete data.supplierNew;
+      delete data.receivedByNew;
+      const bosh = kirimBoshMaydonlar(data);
+      if (bosh.length) {
+        setMessage("To‘ldirilmagan majburiy maydonlar: " + bosh.join(", "));
+        setBusy(false);
+        return;
+      }
+    }
+    // Ekranda foiz, bazada bazis punkt: 5% -> 500.
+    if (kind === "contracts") {
+      data.monthlyRateBp = String(Math.round(Number(data.rateFoiz || 0) * 100));
+      delete data.rateFoiz;
+    }
+    // Qarzga sotishda mijoz bir necha hamyonga bo'lib to'laydi; forma
+    // tekis maydonlardan ro'yxat yasaydi. USD dollarda kiritiladi,
+    // bazaga sent bo'lib ketadi.
+    let body: Record<string, unknown> = data;
+    if (kind === "qarz") {
+      const tolovlar: { method: string; amount: number }[] = [];
+      const qosh = (method: string, amount: number) => {
+        if (amount > 0) tolovlar.push({ method, amount: Math.round(amount) });
+      };
+      qosh("cash_usd", Number(data.tolUsd || 0) * 100);
+      qosh("cash", Number(data.tolSom || 0));
+      qosh("card", Number(data.tolKarta || 0));
+      qosh("transfer", Number(data.tolBank || 0));
+      const qolgani: Record<string, string> = { ...data };
+      for (const k of ["tolUsd", "tolSom", "tolKarta", "tolBank"])
+        delete qolgani[k];
+      body = { ...qolgani, tolovlar };
+    }
     const payload = JSON.stringify(data);
     if (lastPayload.current !== payload) {
       key.current = crypto.randomUUID();
@@ -33,12 +200,21 @@ export function RecordForm({
       const response = await fetch("/api/records", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ branchId, kind, data }),
+        body: JSON.stringify({ branchId, kind, data: body }),
       });
       const result = await response.json();
       if (!response.ok) throw new Error(result.error);
       setMessage("Saqlandi");
       form.reset();
+      setHisob(null);
+      setQarz(null);
+      setSom(0);
+      setHolat("");
+      setXarid("");
+      setYangiTaminotchi(false);
+      setYangiQabul(false);
+      setPrognozSom(0);
+      setAralashJami(0);
       key.current = null;
       lastPayload.current = null;
       router.refresh();
@@ -54,13 +230,14 @@ export function RecordForm({
     type = "text",
     min?: number,
     max?: number,
+    required = true,
   ) => (
     <label key={name}>
       {label}
       <input
         name={name}
         type={type}
-        required
+        required={required}
         min={min}
         max={max}
         step={type === "number" ? 1 : undefined}
@@ -68,13 +245,199 @@ export function RecordForm({
       />
     </label>
   );
+  const ixtiyoriy = (name: string, label: string, type = "text") =>
+    field(name, label, type, undefined, undefined, false);
   return (
-    <form className="entry" onSubmit={submit}>
+    <form
+      className="entry"
+      noValidate={kind === "inventory"}
+      onSubmit={submit}
+      onInput={(e) => hisobla(e.currentTarget)}
+    >
       {kind === "inventory" ? (
         <>
-          {field("model", "Model")}
-          {field("imei", "IMEI (15 raqam)")}
-          {field("cost", "Tannarx UZS", "number", 1)}
+          {ixtiyoriy("brand", "Brend")}
+          {field("model", "Model *")}
+          {field("imei", "IMEI yoki seriya raqami *")}
+          {ixtiyoriy("imei2", "IMEI 2")}
+          {ixtiyoriy("memory", "Xotira")}
+          <label>
+            SIM turi *
+            <select name="simType" defaultValue="">
+              <option value="">Tanlang</option>
+              {SIM_TURLARI.map((t) => (
+                <option key={t} value={t}>
+                  {t}
+                </option>
+              ))}
+            </select>
+          </label>
+          {ixtiyoriy("color", "Rang")}
+          {ixtiyoriy("region", "Region")}
+          <label>
+            Qurilma holati *
+            <select name="condition" defaultValue="">
+              <option value="">Tanlang</option>
+              <option value="Yangi">Yangi</option>
+              <option value="B/U">B/U</option>
+            </select>
+          </label>
+          <label>
+            Batareyka %{holat === "B/U" ? " *" : ""}
+            <input
+              key={holat === "B/U" ? "bu" : "yoq"}
+              name="battery"
+              type="number"
+              min={1}
+              max={100}
+              step={1}
+              disabled={holat !== "B/U"}
+              placeholder={holat === "Yangi" ? "Yangi — yozilmaydi" : ""}
+            />
+          </label>
+          {field("purchaseDate", "Kirim sanasi *", "date")}
+          <label>
+            Tannarx USD *
+            <input name="costUsd" inputMode="decimal" placeholder="850.50" />
+          </label>
+          <label>
+            Kirim kursi (1 USD = so‘m) *
+            <input
+              name="costRate"
+              type="number"
+              min={1}
+              step={1}
+              defaultValue={kurs || undefined}
+            />
+          </label>
+          <label>
+            Tannarx UZS (avtomatik)
+            <input
+              readOnly
+              tabIndex={-1}
+              value={som ? money(som) : ""}
+              placeholder="USD × kurs"
+            />
+          </label>
+          <label>
+            Prognoz sotuv narxi USD *
+            <input
+              name="expectedPriceUsd"
+              inputMode="decimal"
+              placeholder="950"
+            />
+          </label>
+          <label>
+            Yetkazib beruvchi *
+            <select name="supplier" defaultValue="">
+              <option value="">Tanlang</option>
+              {suppliers.map((n) => (
+                <option key={n} value={n}>
+                  {n}
+                </option>
+              ))}
+              <option value={YANGI}>+ Yangi yetkazib beruvchi…</option>
+            </select>
+          </label>
+          {yangiTaminotchi ? (
+            <label>
+              Yangi yetkazib beruvchi nomi *
+              <input name="supplierNew" maxLength={120} />
+            </label>
+          ) : null}
+          <label>
+            Qabul qiluvchi *
+            <select name="receivedBy" defaultValue="">
+              <option value="">Tanlang</option>
+              {receivers.map((n) => (
+                <option key={n} value={n}>
+                  {n}
+                </option>
+              ))}
+              <option value={YANGI}>+ Boshqa xodim…</option>
+            </select>
+          </label>
+          {yangiQabul ? (
+            <label>
+              Qabul qiluvchi ismi *
+              <input name="receivedByNew" maxLength={80} />
+            </label>
+          ) : null}
+          <label>
+            To‘lov turi *
+            <select name="purchaseMethod" defaultValue="">
+              <option value="">Tanlang</option>
+              <option value="cash_uzs">Naqd UZS</option>
+              <option value="cash_usd">Naqd USD</option>
+              <option value="card">Karta</option>
+              <option value="bank">Hisob raqam</option>
+              <option value="mixed">Aralash</option>
+              <option value="debt">Qarzga</option>
+              <option value="investor">Investor tovari</option>
+            </select>
+          </label>
+          {xarid === "investor" ? (
+            <label>
+              Kimning tovari *
+              <select name="investorId">
+                <option value="">Tanlang</option>
+                {investors.map((i) => (
+                  <option key={i.id} value={i.id}>
+                    {i.name}
+                  </option>
+                ))}
+              </select>
+            </label>
+          ) : null}
+          {xarid === "mixed" ? (
+            <>
+              <label>
+                Naqd USD
+                <input name="mixUsd" inputMode="decimal" placeholder="500" />
+              </label>
+              <label>
+                Naqd UZS
+                <input name="mixCash" type="number" min={0} step={1} />
+              </label>
+              <label>
+                Karta UZS
+                <input name="mixCard" type="number" min={0} step={1} />
+              </label>
+              <label>
+                Hisob raqam UZS
+                <input name="mixBank" type="number" min={0} step={1} />
+              </label>
+              <p className="hisob">
+                Aralash to‘lov jami: <strong>{money(aralashJami)}</strong> ·
+                Tannarx: <strong>{som ? money(som) : "—"}</strong>
+                {som && aralashJami !== som ? (
+                  <>
+                    {" "}
+                    · Farq: <strong>{money(som - aralashJami)}</strong> — jami
+                    tannarxga teng bo‘lishi kerak
+                  </>
+                ) : null}
+              </p>
+            </>
+          ) : null}
+          {som || prognozSom ? (
+            <p className="hisob">
+              Tannarx so‘mda: <strong>{som ? money(som) : "—"}</strong>
+              {prognozSom ? (
+                <>
+                  {" "}
+                  · Prognoz sotuv so‘mda: <strong>{money(prognozSom)}</strong>
+                  {som ? (
+                    <>
+                      {" "}
+                      · Kutilgan marja:{" "}
+                      <strong>{money(prognozSom - som)}</strong>
+                    </>
+                  ) : null}
+                </>
+              ) : null}
+            </p>
+          ) : null}
         </>
       ) : null}
       {kind === "contracts" ? (
@@ -90,8 +453,18 @@ export function RecordForm({
               ))}
             </select>
           </label>
-          {field("customerLabel", "Mijoz belgisi (maxfiy hujjatsiz)")}
-          {field("total", "Kelishilgan jami UZS", "number", 1)}
+          {field("customerName", "Mijoz F.I.Sh.")}
+          {ixtiyoriy("pnfl", "PNFL (JShShIR)")}
+          {ixtiyoriy("passport", "Pasport seriyasi")}
+          {ixtiyoriy("passportIssuer", "Pasportni kim berdi")}
+          {ixtiyoriy("passportDate", "Pasport sanasi", "date")}
+          {ixtiyoriy("birthDate", "Tug‘ilgan sana", "date")}
+          {ixtiyoriy("phone1", "Telefon 1")}
+          {ixtiyoriy("phone2", "Telefon 2")}
+          {ixtiyoriy("address", "Manzil")}
+          {ixtiyoriy("icloudAccount", "iCloud akkaunt")}
+          {ixtiyoriy("icloudPhone", "iCloud raqami")}
+          {field("priceUzs", "Qurilma narxi UZS", "number", 1)}
           {field("downPayment", "Boshlang‘ich UZS", "number", 0)}
           <label>
             Boshlang‘ich to‘lov hamyoni
@@ -102,7 +475,104 @@ export function RecordForm({
             </select>
           </label>
           {field("months", "Oylar", "number", 1, 36)}
+          <label>
+            Oylik ustama %
+            <input
+              name="rateFoiz"
+              type="number"
+              required
+              min={0}
+              max={100}
+              step={0.1}
+              defaultValue={5}
+            />
+          </label>
           {field("startDate", "Boshlanish sanasi", "date")}
+          {ixtiyoriy("seller", "Sotuvchi")}
+          <label>
+            Sotuv kanali
+            <select name="channel" defaultValue="">
+              <option value="">—</option>
+              <option value="Bozor">Bozor</option>
+              <option value="Instagram">Instagram</option>
+              <option value="Telegram">Telegram</option>
+              <option value="Eski mijoz">Eski mijoz</option>
+              <option value="Tavsiya">Tavsiya</option>
+              <option value="Boshqa">Boshqa</option>
+            </select>
+          </label>
+          {ixtiyoriy(
+            "limitOverrideReason",
+            "Limitdan oshsa: rahbar sababi",
+          )}
+          {hisob ? (
+            <p className="hisob">
+              Asosiy qarz <strong>{money(hisob.principal)}</strong> · Ustama{" "}
+              <strong>{money(hisob.markup)}</strong> · Jami{" "}
+              <strong>{money(hisob.total)}</strong> · Oylik to‘lov{" "}
+              <strong>{money(hisob.monthly)}</strong>
+            </p>
+          ) : null}
+        </>
+      ) : null}
+      {kind === "qarz" ? (
+        <>
+          <label>
+            Qurilma
+            <select name="inventoryId" required>
+              <option value="">Tanlang</option>
+              {items.map((i) => (
+                <option key={i.id} value={i.id}>
+                  {i.label}
+                </option>
+              ))}
+            </select>
+          </label>
+          {field("customerName", "Mijoz F.I.Sh.")}
+          {ixtiyoriy("pnfl", "PNFL (JShShIR)")}
+          {ixtiyoriy("passport", "Pasport seriyasi")}
+          {ixtiyoriy("phone1", "Telefon 1")}
+          {ixtiyoriy("phone2", "Telefon 2")}
+          {ixtiyoriy("address", "Manzil")}
+          <label>
+            Fakt sotish narxi, $
+            <input
+              name="priceUsd"
+              type="number"
+              required
+              min={1}
+              step={0.01}
+            />
+          </label>
+          <label>
+            Sotuv kursi
+            <input
+              name="rate"
+              type="number"
+              required
+              min={1}
+              step={1}
+              defaultValue={kurs || undefined}
+            />
+          </label>
+          <label>
+            Naqd dollar, $
+            <input name="tolUsd" type="number" min={0} step={0.01} />
+          </label>
+          {ixtiyoriy("tolSom", "Naqd so‘m", "number")}
+          {ixtiyoriy("tolKarta", "Karta (P2P), so‘m", "number")}
+          {ixtiyoriy("tolBank", "Hisob raqam, so‘m", "number")}
+          {field("dueDate", "Qarz muddati", "date")}
+          {ixtiyoriy("seller", "Sotuvchi")}
+          {ixtiyoriy("limitOverrideReason", "Limitdan oshsa: rahbar sababi")}
+          {qarz ? (
+            <p className="hisob">
+              Sotish narxi <strong>{money(qarz.narx)}</strong> · Tushdi{" "}
+              <strong>{money(qarz.tushdi)}</strong> · Qolgan qarz{" "}
+              <strong>{qarz.qoldiqUsd.toFixed(2)} $</strong> ={" "}
+              <strong>{money(qarz.qoldiqSom)}</strong>
+            </p>
+          ) : null}
         </>
       ) : null}
       {kind === "payments" ? (
@@ -118,15 +588,52 @@ export function RecordForm({
               ))}
             </select>
           </label>
-          {field("amount", "To‘lov UZS", "number", 1)}
           <label>
             Usul
-            <select name="method">
-              <option value="cash">Naqd</option>
-              <option value="card">Karta</option>
-              <option value="transfer">O‘tkazma</option>
+            <select
+              name="method"
+              value={usul}
+              onChange={(e) => setUsul(e.target.value)}
+            >
+              <option value="cash">Naqd UZS</option>
+              <option value="cash_usd">Naqd USD</option>
+              <option value="card">Karta (P2P)</option>
+              <option value="transfer">Hisob raqam</option>
             </select>
           </label>
+          {usul === "cash_usd" ? (
+            <>
+              <label>
+                Olingan dollar
+                <input
+                  name="usdAmount"
+                  required
+                  inputMode="decimal"
+                  pattern="\d{1,9}([.]\d{1,2})?"
+                  placeholder="100.50"
+                />
+              </label>
+              <label>
+                To‘lov kursi (1 USD = so‘m)
+                <input
+                  name="rate"
+                  type="number"
+                  required
+                  min={1}
+                  step={1}
+                  defaultValue={kurs || undefined}
+                />
+              </label>
+              {som ? (
+                <p className="hisob">
+                  Qarzga yo‘naltiriladi: <strong>{money(som)}</strong>
+                </p>
+              ) : null}
+            </>
+          ) : (
+            field("amount", "To‘lov UZS", "number", 1)
+          )}
+          {ixtiyoriy("evidence", "Tranzaksiya raqami / dalil")}
         </>
       ) : null}
       <button disabled={busy}>{busy ? "Saqlanmoqda…" : "Saqlash"}</button>

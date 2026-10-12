@@ -117,6 +117,7 @@ export async function exportWorkbook(data: ExportData) {
       "Bekor qilish sababi",
       "Bekor qilingan vaqt (Toshkent)",
       "Bekor qilgan xodim",
+      "Avansga tushgan",
     ],
     data.payments.map((r) => [
       text(r.id),
@@ -124,14 +125,27 @@ export async function exportWorkbook(data: ExportData) {
       text(r.customer_label),
       text(r.imei),
       amount(r.amount),
-      r.method === "cash" ? "Naqd" : r.method === "card" ? "Karta" : "O‘tkazma",
+      r.method === "cash"
+        ? "Naqd UZS"
+        : r.method === "cash_usd"
+          ? "Naqd USD"
+          : r.method === "card"
+            ? "Karta"
+            : "O‘tkazma",
       text(r.payment_time),
-      r.voided_at ? "Bekor qilingan — hisobga kirmaydi" : "Faol",
+      r.voided_at
+        ? "Bekor qilingan — hisobga kirmaydi"
+        : r.status === "pending"
+          ? "Tasdiq kutilmoqda — hisobga kirmaydi"
+          : r.status === "rejected"
+            ? "Rad etilgan — hisobga kirmaydi"
+            : "Faol",
       text(r.void_reason),
       text(r.voided_at),
       text(r.voided_by),
+      amount(r.advance_amount),
     ]),
-    [5],
+    [5, 12],
   );
   add(
     "Qarzdorlar",
@@ -241,7 +255,13 @@ export async function exportWorkbook(data: ExportData) {
       text(r.imei),
       text(r.customer_label),
       amount(r.amount),
-      r.method === "cash" ? "Naqd" : r.method === "card" ? "Karta" : "O‘tkazma",
+      r.method === "cash"
+        ? "Naqd UZS"
+        : r.method === "cash_usd"
+          ? "Naqd USD"
+          : r.method === "card"
+            ? "Karta"
+            : "O‘tkazma",
       text(r.author),
     ]),
     [6],
