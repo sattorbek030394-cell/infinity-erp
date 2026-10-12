@@ -1,7 +1,7 @@
 import { scope } from "./auth";
 import { db } from "./db";
 import { can } from "./domain";
-import { qarzSql, tolanganSql } from "./qarz-sql";
+import { qarzSql, qarzCentsSql, tolanganSql } from "./qarz-sql";
 import { readTargets, METRICS, type Metric } from "./targets";
 
 /**
@@ -42,6 +42,9 @@ export type OylikFoyda = {
   naqdSoni: number;
   naqdNarx: number;
   naqdTannarx: number;
+  qarzSoni: number;
+  qarzNarx: number;
+  qarzTannarx: number;
   marja: number;
   ustama: number;
   bekorUstama: number;
@@ -91,16 +94,22 @@ export async function readProfit(branchId: string, oyRaw: string, oylar = 6) {
   const q = async (sql: string) =>
     (await db.query(sql, [...args, dan, boshi(oy)])).rows;
 
-  // Nasiya sotuvi: shartnoma sanasi bo'yicha, narx = asosiy qarz + boshlang'ich.
-  const nasiya = await q(
-    `SELECT to_char(c.start_date,'YYYY-MM') oy, count(*) n,
+  // Shartnomali sotuv: shartnoma sanasi bo'yicha, narx = asosiy qarz +
+  // boshlang'ich. Nasiya va qarzga sotish alohida sanaladi - ikkisining
+  // tabiati boshqa, bitta "nasiya" raqamiga qo'shib yuborish hisobotni
+  // yanglishtiradi.
+  const shartnomaSotuv = (tur: "nasiya" | "qarz") =>
+    q(
+      `SELECT to_char(c.start_date,'YYYY-MM') oy, count(*) n,
  COALESCE(sum(COALESCE(c.principal,c.total-c.down_payment)+c.down_payment),0) narx,
  COALESCE(sum(i.cost),0) tannarx
  FROM contracts c JOIN inventory i ON i.id=c.inventory_id AND i.tenant_id=c.tenant_id AND i.branch_id=c.branch_id
- WHERE c.tenant_id=$1 AND c.branch_id=$2
+ WHERE c.tenant_id=$1 AND c.branch_id=$2 AND c.kind='${tur}'
  AND c.start_date>=$3::date AND c.start_date<$4::date+interval '1 month'
  GROUP BY 1`,
-  );
+    );
+  const nasiya = await shartnomaSotuv("nasiya");
+  const qarz = await shartnomaSotuv("qarz");
   // Naqd sotuv.
   const naqd = await q(
     `SELECT to_char((sale.created_at AT TIME ZONE 'Asia/Tashkent')::date,'YYYY-MM') oy,
@@ -167,6 +176,7 @@ export async function readProfit(branchId: string, oyRaw: string, oylar = 6) {
   const jadval: OylikFoyda[] = oyna.map((o) => {
     const n = topil(nasiya, o),
       q2 = topil(naqd, o),
+      z = topil(qarz, o),
       u = topil(ustama, o),
       b = topil(bekor, o),
       x = pul.find((r) => r.oy === o && r.turi === "xarajat"),
@@ -175,7 +185,15 @@ export async function readProfit(branchId: string, oyRaw: string, oylar = 6) {
       nasiyaTannarx = Number(n?.tannarx ?? 0),
       naqdNarx = Number(q2?.narx ?? 0),
       naqdTannarx = Number(q2?.tannarx ?? 0),
-      marja = nasiyaNarx - nasiyaTannarx + naqdNarx - naqdTannarx,
+      qarzNarx = Number(z?.narx ?? 0),
+      qarzTannarx = Number(z?.tannarx ?? 0),
+      marja =
+        nasiyaNarx -
+        nasiyaTannarx +
+        naqdNarx -
+        naqdTannarx +
+        qarzNarx -
+        qarzTannarx,
       ustamaDaromad = Number(u?.daromad ?? 0) - Number(b?.tuzatish ?? 0),
       xarajatUzs = Number(x?.uzs ?? 0),
       xarajatUsd = Number(x?.usd ?? 0);
@@ -189,6 +207,9 @@ export async function readProfit(branchId: string, oyRaw: string, oylar = 6) {
       naqdSoni: Number(q2?.n ?? 0),
       naqdNarx,
       naqdTannarx,
+      qarzSoni: Number(z?.n ?? 0),
+      qarzNarx,
+      qarzTannarx,
       marja,
       ustama: ustamaDaromad,
       bekorUstama: Number(b?.summa ?? 0),
@@ -281,7 +302,16 @@ export async function readProfit(branchId: string, oyRaw: string, oylar = 6) {
  COALESCE(sum(COALESCE(c.principal,c.total-c.down_payment)+c.down_payment),0) narx,
  COALESCE(sum(i.cost),0) tannarx, COALESCE(sum(COALESCE(c.markup,0)),0) ustama
  FROM contracts c JOIN inventory i ON i.id=c.inventory_id AND i.tenant_id=c.tenant_id AND i.branch_id=c.branch_id
- WHERE c.tenant_id=$1 AND c.branch_id=$2
+ WHERE c.tenant_id=$1 AND c.branch_id=$2 AND c.kind='nasiya'
+ AND c.start_date>=$4::date AND c.start_date<$4::date+interval '1 month'
+ GROUP BY 1`,
+    );
+    const qrz = await q(
+      `SELECT COALESCE(NULLIF(c.${ustun},''),'(ko''rsatilmagan)') nom, count(*) dona,
+ COALESCE(sum(COALESCE(c.principal,c.total-c.down_payment)+c.down_payment),0) narx,
+ COALESCE(sum(i.cost),0) tannarx
+ FROM contracts c JOIN inventory i ON i.id=c.inventory_id AND i.tenant_id=c.tenant_id AND i.branch_id=c.branch_id
+ WHERE c.tenant_id=$1 AND c.branch_id=$2 AND c.kind='qarz'
  AND c.start_date>=$4::date AND c.start_date<$4::date+interval '1 month'
  GROUP BY 1`,
     );
@@ -294,13 +324,17 @@ export async function readProfit(branchId: string, oyRaw: string, oylar = 6) {
  AND (sale.created_at AT TIME ZONE 'Asia/Tashkent')::date<$4::date+interval '1 month'
  GROUP BY 1`,
     );
-    const nomlar = [...new Set([...nas, ...naq].map((r) => r.nom as string))];
+    const nomlar = [
+      ...new Set([...nas, ...naq, ...qrz].map((r) => r.nom as string)),
+    ];
     return nomlar
       .map((nom) => {
         const n = nas.find((r) => r.nom === nom),
-          k = naq.find((r) => r.nom === nom);
+          k = naq.find((r) => r.nom === nom),
+          z = qrz.find((r) => r.nom === nom);
         const nasiyaMarja = Number(n?.narx ?? 0) - Number(n?.tannarx ?? 0),
-          naqdMarja = Number(k?.narx ?? 0) - Number(k?.tannarx ?? 0);
+          naqdMarja = Number(k?.narx ?? 0) - Number(k?.tannarx ?? 0),
+          qarzMarja = Number(z?.narx ?? 0) - Number(z?.tannarx ?? 0);
         return {
           nom,
           nasiyaDona: Number(n?.dona ?? 0),
@@ -312,7 +346,10 @@ export async function readProfit(branchId: string, oyRaw: string, oylar = 6) {
           naqdDona: Number(k?.dona ?? 0),
           naqdNarx: Number(k?.narx ?? 0),
           naqdMarja,
-          marja: nasiyaMarja + naqdMarja,
+          qarzDona: Number(z?.dona ?? 0),
+          qarzNarx: Number(z?.narx ?? 0),
+          qarzMarja,
+          marja: nasiyaMarja + naqdMarja + qarzMarja,
         };
       })
       .sort((a, b) => b.marja + b.ustama - (a.marja + a.ustama));
@@ -332,9 +369,11 @@ export async function readProfit(branchId: string, oyRaw: string, oylar = 6) {
   ).rows[0];
   const portfel = (
     await db.query(
-      `SELECT COALESCE(sum(COALESCE(c.principal,c.total-c.down_payment)),0) asosiy,
+      `SELECT COALESCE(sum(CASE WHEN c.kind='nasiya' THEN COALESCE(c.principal,c.total-c.down_payment) END),0) asosiy,
  COALESCE(sum(COALESCE(c.markup,0)),0) ustama,
- COALESCE(sum(GREATEST(${qarzSql()},0)),0) qoldiq
+ COALESCE(sum(CASE WHEN c.kind='nasiya' THEN GREATEST(${qarzSql()},0) END),0) qoldiq,
+ COALESCE(sum(CASE WHEN c.kind='qarz' THEN GREATEST(${qarzSql()},0) END),0) qarzQoldiq,
+ COALESCE(sum(CASE WHEN c.kind='qarz' THEN GREATEST(${qarzCentsSql()},0) END),0) qarzSent
  FROM contracts c WHERE c.tenant_id=$1 AND c.branch_id=$2`,
       args,
     )

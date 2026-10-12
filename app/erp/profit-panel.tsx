@@ -39,8 +39,8 @@ function telegram(r: Awaited<ReturnType<typeof readProfit>>) {
   const satrlar = [
     `Infinity — ${kun}`,
     "",
-    `Sotuv: ${j.nasiyaSoni + j.naqdSoni} dona (nasiya ${j.nasiyaSoni} / naqd ${j.naqdSoni})`,
-    `Sotuv summasi: ${som(j.nasiyaNarx + j.naqdNarx)} so'm`,
+    `Sotuv: ${j.nasiyaSoni + j.naqdSoni + j.qarzSoni} dona (nasiya ${j.nasiyaSoni} / naqd ${j.naqdSoni} / qarzga ${j.qarzSoni})`,
+    `Sotuv summasi: ${som(j.nasiyaNarx + j.naqdNarx + j.qarzNarx)} so'm`,
     `Sotuv marjasi: ${som(j.marja)} so'm`,
     `Nasiya daromadi: ${som(j.ustama)} so'm`,
     `Xarajat: ${som(j.xarajatUzs + (r.kurs ? Math.round((j.xarajatUsd * r.kurs) / 100) : 0))} so'm`,
@@ -48,6 +48,7 @@ function telegram(r: Awaited<ReturnType<typeof readProfit>>) {
     "",
     `Bugungi to'lovlar: ${som(r.bugungi.summa)} so'm (${r.bugungi.soni} ta)`,
     `Nasiya qoldig'i: ${som(r.portfel.qoldiq)} so'm`,
+    `Qarzga sotish qoldig'i: ${som(r.portfel.qarzQoldiq)} so'm`,
     `Kechikkan: ${som(r.kechikkan.summa)} so'm (${r.kechikkan.soni} shartnoma)`,
     `Omborda: ${r.ombor.n} dona, tannarxi ${som(r.ombor.tannarx)} so'm`,
   ];
@@ -94,6 +95,13 @@ export function ProfitPanel({
           <p>
             Nasiya {j.nasiyaSoni} dona: {money(j.nasiyaNarx - j.nasiyaTannarx)}{" "}
             • naqd {j.naqdSoni} dona: {money(j.naqdNarx - j.naqdTannarx)}
+            {j.qarzSoni ? (
+              <>
+                {" "}
+                • qarzga {j.qarzSoni} dona:{" "}
+                {money(j.qarzNarx - j.qarzTannarx)}
+              </>
+            ) : null}
           </p>
         </section>
         <section>
@@ -147,6 +155,15 @@ export function ProfitPanel({
           </p>
         </section>
         <section>
+          <h2>Qarzga sotish qoldig‘i</h2>
+          <strong>{money(report.portfel.qarzQoldiq)}</strong>
+          <p>
+            {Number(report.portfel.qarzSent)
+              ? `Dollarda ${cashMoney(report.portfel.qarzSent, "cash_usd")} — ustamasiz, muddatli qarz`
+              : "Ochiq qarzga sotuv yo‘q"}
+          </p>
+        </section>
+        <section>
           <h2>Nasiya portfeli</h2>
           <strong>{money(report.portfel.qoldiq)}</strong>
           <p>
@@ -185,13 +202,16 @@ export function ProfitPanel({
                 </a>
               </td>
               <td>
-                {o.nasiyaSoni + o.naqdSoni}
+                {o.nasiyaSoni + o.naqdSoni + o.qarzSoni}
                 <small>
-                  nasiya {o.nasiyaSoni} • naqd {o.naqdSoni}
+                  nasiya {o.nasiyaSoni} • naqd {o.naqdSoni} • qarzga{" "}
+                  {o.qarzSoni}
                 </small>
               </td>
-              <td>{money(o.nasiyaNarx + o.naqdNarx)}</td>
-              <td>{money(o.nasiyaTannarx + o.naqdTannarx)}</td>
+              <td>{money(o.nasiyaNarx + o.naqdNarx + o.qarzNarx)}</td>
+              <td>
+                {money(o.nasiyaTannarx + o.naqdTannarx + o.qarzTannarx)}
+              </td>
               <td>{money(o.marja)}</td>
               <td>{money(o.ustama)}</td>
               <td>{money(o.xarajatUzs + usdSom(o.xarajatUsd))}</td>
@@ -214,6 +234,7 @@ export function ProfitPanel({
                 <th>Kelishilgan ustama</th>
                 <th>Naqd (dona / summa)</th>
                 <th>Naqd marjasi</th>
+                <th>Qarzga (dona / marja)</th>
                 <th>Jami marja</th>
               </tr>
             </thead>
@@ -232,6 +253,10 @@ export function ProfitPanel({
                     <small>{money(r.naqdNarx)}</small>
                   </td>
                   <td>{money(r.naqdMarja)}</td>
+                  <td>
+                    {r.qarzDona} dona
+                    <small>{money(r.qarzMarja)}</small>
+                  </td>
                   <td>
                     <strong>{money(r.marja)}</strong>
                   </td>
@@ -264,12 +289,13 @@ export function ProfitPanel({
                 <tr key={r.nom}>
                   <td>{r.nom}</td>
                   <td>
-                    {r.nasiyaDona + r.naqdDona}
+                    {r.nasiyaDona + r.naqdDona + r.qarzDona}
                     <small>
-                      nasiya {r.nasiyaDona} • naqd {r.naqdDona}
+                      nasiya {r.nasiyaDona} • naqd {r.naqdDona} • qarzga{" "}
+                      {r.qarzDona}
                     </small>
                   </td>
-                  <td>{money(r.nasiyaNarx + r.naqdNarx)}</td>
+                  <td>{money(r.nasiyaNarx + r.naqdNarx + r.qarzNarx)}</td>
                   <td>{money(r.marja)}</td>
                   <td>{money(r.ustama)}</td>
                 </tr>

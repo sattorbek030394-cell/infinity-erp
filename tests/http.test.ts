@@ -3613,5 +3613,23 @@ test(
       ).rows[0].q,
     );
     assert.equal(somQoldiq, 0, "so‘mdagi qoldiq ham nol");
+
+    // Foyda hisobotida qarzga sotish alohida qatorda sanaladi, "nasiya"
+    // raqamiga qo'shib yuborilmaydi.
+    const oy = (
+      await pool.query(
+        "SELECT to_char((now() AT TIME ZONE 'Asia/Tashkent')::date,'YYYY-MM') oy",
+      )
+    ).rows[0].oy;
+    const html = await (
+      await fetch(origin + "/erp?branch=" + b1 + "&tab=profit&oy=" + oy, {
+        headers: { cookie: auth },
+      })
+    ).text();
+    assert.ok(
+      html.includes("qarzga 1"),
+      "foyda hisobotida qarzga sotish alohida ko‘rinsin",
+    );
+    assert.ok(html.includes("Qarzga sotish qoldig‘i"));
   },
 );
