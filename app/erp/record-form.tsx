@@ -10,7 +10,6 @@ export function RecordForm({
   selectedId,
   kurs = "",
   investors = [],
-  tradeIns = [],
 }: {
   branchId: string;
   kind: string;
@@ -18,7 +17,6 @@ export function RecordForm({
   selectedId?: string;
   kurs?: string;
   investors?: { id: string; name: string }[];
-  tradeIns?: { id: string; label: string }[];
 }) {
   const router = useRouter();
   const [message, setMessage] = useState("");
@@ -226,7 +224,6 @@ export function RecordForm({
               <option value="bank">Hisob raqam</option>
               <option value="debt">Qarzga</option>
               <option value="investor">Investor tovari</option>
-              <option value="trade_in">Trade-in (mijozdan)</option>
             </select>
           </label>
           {xarid === "investor" ? (
@@ -283,19 +280,6 @@ export function RecordForm({
               <option value="transfer">Hisob raqam</option>
             </select>
           </label>
-          {tradeIns.length ? (
-            <label>
-              Trade-in qurilma (boshlang‘ichning bir qismi)
-              <select name="tradeInId" defaultValue="">
-                <option value="">—</option>
-                {tradeIns.map((t) => (
-                  <option key={t.id} value={t.id}>
-                    {t.label}
-                  </option>
-                ))}
-              </select>
-            </label>
-          ) : null}
           {field("months", "Oylar", "number", 1, 36)}
           <label>
             Oylik ustama %

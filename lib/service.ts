@@ -294,11 +294,7 @@ async function writeRecord(
           s.userId,
         ],
       );
-    } else if (
-      v.purchaseMethod &&
-      v.purchaseMethod !== "investor" &&
-      v.purchaseMethod !== "trade_in"
-    ) {
+    } else if (v.purchaseMethod && v.purchaseMethod !== "investor") {
       const hamyon =
         v.purchaseMethod === "cash_usd"
           ? "cash_usd"
@@ -354,28 +350,6 @@ async function writeRecord(
     );
     if (!item.rowCount) throw new Error("Mahsulot mavjud emas");
     const { total, principal, markup, bp } = await nasiyaShartlari(c, s, v);
-    // Trade-in: eski telefonning tannarxi boshlang'ich to'lovning
-    // ichida. Kassaga faqat pul qismi tushadi.
-    let tradeIn = 0;
-    if (v.tradeInId) {
-      if (v.tradeInId === v.inventoryId)
-        throw new Error("Sotilayotgan qurilma trade-in bo‘lolmaydi");
-      const t = await c.query(
-        `SELECT i.cost FROM inventory i
- WHERE i.id=$1 AND i.tenant_id=$2 AND i.branch_id=$3
- AND i.status='available' AND i.purchase_method='trade_in'
- AND NOT EXISTS(SELECT 1 FROM contracts c2 WHERE c2.trade_in_id=i.id)
- FOR UPDATE`,
-        [v.tradeInId, s.tenant_id, s.branch_id],
-      );
-      if (!t.rowCount)
-        throw new Error("Trade-in qurilma topilmadi yoki band");
-      tradeIn = Number(t.rows[0].cost);
-      if (tradeIn > v.downPayment)
-        throw new Error(
-          "Trade-in bahosi boshlang‘ich to‘lovdan oshmasligi kerak",
-        );
-    }
     const customerId = v.customerName ? await mijozYoz(c, s, v) : null;
     const override = customerId
       ? await limitTekshir(c, s, customerId, principal + markup, v)
@@ -386,9 +360,9 @@ async function writeRecord(
     await c.query(
       `INSERT INTO contracts(id,tenant_id,branch_id,inventory_id,customer_id,customer_label,number,
  total,down_payment,principal,markup,monthly_rate_bp,months,start_date,
- limit_override_by,limit_override_reason,seller,channel,trade_in_id)
+ limit_override_by,limit_override_reason,seller,channel)
  VALUES($1,$2,$3,$4,$5,$6,(SELECT COALESCE(max(number),0)+1 FROM contracts WHERE tenant_id=$2),
- $7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17,$18)`,
+ $7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17)`,
       [
         id,
         s.tenant_id,
@@ -407,7 +381,6 @@ async function writeRecord(
         override,
         v.seller,
         v.channel,
-        v.tradeInId ?? null,
       ],
     );
     for (const p of schedule(total, v.downPayment, v.months, v.startDate))
@@ -420,15 +393,7 @@ async function writeRecord(
     await c.query("UPDATE inventory SET status='sold' WHERE id=$1", [
       v.inventoryId,
     ]);
-    // Kassaga faqat pul qismi: trade-in qurilma pul emas.
-    await postCashReceipt(
-      c,
-      s,
-      id,
-      v.downPayment - tradeIn,
-      v.downPaymentMethod,
-      "down",
-    );
+    await postCashReceipt(c, s, id, v.downPayment, v.downPaymentMethod, "down");
   } else if (kind === "qarz") {
     // Qarzga sotish: ustamasiz, bitta muddatli, qarzi dollarda.
     const v = qarzSotuvSchema.parse(input);
@@ -659,21 +624,6 @@ export async function readBranch(branchId: string) {
         args,
       )
     ).rows[0],
-    // Bo'sh trade-in qurilmalar: shartnomaga bog'lanmagan va omborda
-    // turganlari. Shartnoma formasidagi tanlov shu ro'yxatdan.
-    tradeIns: (
-      await db.query(
-        `SELECT i.id,i.model,i.imei,i.cost FROM inventory i
- WHERE i.tenant_id=$1 AND i.branch_id=$2 AND i.status='available'
- AND i.purchase_method='trade_in'
- AND NOT EXISTS(SELECT 1 FROM contracts c WHERE c.trade_in_id=i.id)
- ORDER BY i.model`,
-        args,
-      )
-    ).rows.map((r) => ({
-      id: r.id as string,
-      label: `${r.model} / ${r.imei} — ${Number(r.cost).toLocaleString("uz-UZ")}`,
-    })),
     // Mijoz avanslari qarzdan alohida yuritiladi (PAY-04).
     advances: (
       await db.query(

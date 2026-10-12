@@ -33,7 +33,6 @@ export const TOLOV_TURLARI = [
   "bank",
   "debt",
   "investor",
-  "trade_in",
 ] as const;
 
 export const itemSchema = z
@@ -111,9 +110,6 @@ export const contractSchema = z
     total: ixtiyoriy(money),
     downPayment: z.coerce.number().int().min(0),
     downPaymentMethod: z.enum(["cash", "card", "transfer"]).default("cash"),
-    // Mijozning eski telefoni boshlang'ich to'lovning bir qismi bo'lsa:
-    // Kirimga "Trade-in" turi bilan olingan qurilma (taklif 3.10).
-    tradeInId: ixtiyoriy(z.uuid()),
     months: z.coerce.number().int().min(1).max(36),
     monthlyRateBp: ixtiyoriy(rateBp),
     startDate: z.iso.date(),
