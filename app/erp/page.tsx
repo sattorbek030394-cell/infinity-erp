@@ -30,6 +30,8 @@ import { readSuppliers } from "../../lib/supplier";
 import { SuppliersPanel } from "./suppliers-panel";
 import { readProfit } from "../../lib/profit";
 import { readProfitDetail } from "../../lib/profit-detail";
+import { readAdvances } from "../../lib/advance";
+import { AdvancePanel } from "./advance-panel";
 import { ProfitDetailPanel } from "./profit-detail-panel";
 import { readInvestors, investorRoyxati } from "../../lib/investor";
 import { InvestorPanel } from "./investor-panel";
@@ -102,6 +104,7 @@ export default async function ERP({
   const closings = tab === "cash" ? await readClosings(branch) : null;
   const sales = tab === "sales" ? await readSales(branch, filters) : null;
   const pending = tab === "approvals" ? await readPending(branch) : null;
+  const advances = tab === "payments" ? await readAdvances(branch) : null;
   const closures = tab === "closures" ? await readClosures(branch) : null;
   const suppliers = tab === "suppliers" ? await readSuppliers(branch) : null;
   // Foyda raqamining tafsiloti: ?tafsil=marja|ustama|kursfarqi|xarajat
@@ -502,6 +505,13 @@ export default async function ERP({
         {tab === "payments" && history ? (
           <>
             <h1>To‘lovlar</h1>
+            {advances ? (
+              <AdvancePanel
+                branchId={branch}
+                rows={advances}
+                canMove={can(data.role, "payment.approve.transfer")}
+              />
+            ) : null}
             {can(data.role, "payment.create") && (
               <RecordForm
                 branchId={branch}

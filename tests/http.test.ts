@@ -3972,3 +3972,169 @@ test(
     assert.ok(yopiq.includes("huquqi yo‘q"));
   },
 );
+
+test(
+  "HTTP: avansni mijozning boshqa shartnomasiga ko‘chirish (PAY-04)",
+  { skip: !connection },
+  async () => {
+    const auth = await login(admin + "@example.invalid");
+    const kassirAuth = await login(kassir + "@example.invalid");
+    const qurilma = async (imei: string) =>
+      (
+        await (
+          await post(
+            "inventory",
+            { imei, model: "SYNTHETIC AVANS", cost: 1_000_000 },
+            b1,
+            auth,
+          )
+        ).json()
+      ).id as string;
+    const shartnoma = async (
+      inventoryId: string,
+      pnfl: string,
+      priceUzs: number,
+    ) =>
+      (
+        await (
+          await post(
+            "contracts",
+            {
+              inventoryId,
+              customerName: "SYNTHETIC AVANS mijoz " + pnfl.slice(-1),
+              pnfl,
+              priceUzs,
+              downPayment: 500_000,
+              months: 1,
+              monthlyRateBp: 500,
+              startDate: "2026-10-01",
+            },
+            b1,
+            auth,
+          )
+        ).json()
+      ).id as string;
+    const PNFL = "55500011122";
+    const A = await shartnoma(await qurilma("766666666666661"), PNFL, 2_000_000);
+    const B = await shartnoma(await qurilma("766666666666662"), PNFL, 3_000_000);
+    // Boshqa mijozning shartnomasi - ko'chirish joyi bo'lmasligi kerak.
+    const C = await shartnoma(
+      await qurilma("766666666666663"),
+      "55500011133",
+      3_000_000,
+    );
+    const qarz = async (id: string) =>
+      Number(
+        (
+          await pool.query(
+            `SELECT ${"c.total-c.down_payment-COALESCE((SELECT sum(p.amount) FROM payments p WHERE p.contract_id=c.id AND p.status='approved' AND p.voided_at IS NULL),0)"} q
+ FROM contracts c WHERE c.id=$1`,
+            [id],
+          )
+        ).rows[0].q,
+      );
+    // A da qarz 1 575 000. 2 000 000 to'lanadi -> 425 000 avans.
+    assert.equal(await qarz(A), 1_575_000);
+    assert.equal(
+      (
+        await post(
+          "payments",
+          {
+            contractId: A,
+            amount: 2_000_000,
+            method: "cash",
+            requestKey: randomUUID(),
+          },
+          b1,
+          auth,
+        )
+      ).status,
+      200,
+    );
+    assert.equal(await qarz(A), 0);
+    const avans = (
+      await pool.query(
+        "SELECT id,amount-used_amount q FROM customer_advances WHERE contract_id=$1",
+        [A],
+      )
+    ).rows[0];
+    assert.equal(Number(avans.q), 425_000);
+
+    const kochir = (body: Record<string, unknown>, cookie = auth) =>
+      fetch(origin + "/api/advances", {
+        method: "POST",
+        headers: { cookie, origin, "content-type": "application/json" },
+        body: JSON.stringify({ branchId: b1, advanceId: avans.id, ...body }),
+      });
+    // Kassirda bu huquq yo'q: pulni bir shartnomadan ikkinchisiga
+    // ko'chirish rahbar qarori.
+    assert.equal(
+      (
+        await kochir(
+          { toContractId: B, amount: 100_000, reason: "Kassir urinadi" },
+          kassirAuth,
+        )
+      ).status,
+      403,
+    );
+    // Boshqa mijozning shartnomasiga o'tmaydi.
+    assert.equal(
+      (await kochir({ toContractId: C, amount: 100_000, reason: "Boshqa mijoz" }))
+        .status,
+      400,
+    );
+    // Qoldiqdan ortiq ko'chirilmaydi.
+    assert.equal(
+      (await kochir({ toContractId: B, amount: 900_000, reason: "Ortiq summa" }))
+        .status,
+      400,
+    );
+    const bOldin = await qarz(B);
+    assert.equal(
+      (
+        await kochir({
+          toContractId: B,
+          amount: 400_000,
+          reason: "Birinchi shartnoma yopildi, qoldiq ikkinchisiga",
+        })
+      ).status,
+      200,
+    );
+    assert.equal(await qarz(B), bOldin - 400_000, "maqsad qarzi kamayadi");
+    assert.equal(
+      Number(
+        (
+          await pool.query(
+            "SELECT amount-used_amount q FROM customer_advances WHERE id=$1",
+            [avans.id],
+          )
+        ).rows[0].q,
+      ),
+      25_000,
+      "avans qoldig‘i kamayadi",
+    );
+    // Kassaga yozuv tushmaydi: pul avans paydo bo'lgan kuni kirgan.
+    const yozuv = (
+      await pool.query(
+        `SELECT p.id,p.method,
+ (SELECT count(*) FROM cash_entries k WHERE k.payment_id=p.id) kassa
+ FROM payments p WHERE p.contract_id=$1 AND p.method='advance'`,
+        [B],
+      )
+    ).rows;
+    assert.equal(yozuv.length, 1);
+    assert.equal(Number(yozuv[0].kassa), 0, "kassaga ikkinchi marta kirmaydi");
+    // Qolgan 25 000 ni ham ko'chirsa avans tugaydi.
+    assert.equal(
+      (await kochir({ toContractId: B, amount: 25_000, reason: "Qoldig‘i ham" }))
+        .status,
+      200,
+    );
+    assert.equal(
+      (await kochir({ toContractId: B, amount: 1_000, reason: "Yana urinish" }))
+        .status,
+      400,
+      "tugagan avansdan ko‘chirilmaydi",
+    );
+  },
+);
