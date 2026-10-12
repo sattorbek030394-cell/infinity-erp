@@ -97,6 +97,13 @@ export async function readProfit(branchId: string, oyRaw: string, oylar = 6) {
   const q = async (sql: string) =>
     (await db.query(sql, [...args, dan, boshi(oy)])).rows;
 
+  // Faqat tanlangan oy bo'yicha so'rov: $3 = oy boshi. Bunday so'rovda
+  // `q` ishlatilmaydi, chunki uning $3 (oyna boshi) parametri matnda
+  // qo'llanmay qoladi va Postgres turini aniqlay olmay
+  // "could not determine data type of parameter $3" deb yiqiladi.
+  const qOy = async (sql: string) =>
+    (await db.query(sql, [...args, boshi(oy)])).rows;
+
   // Shartnomali sotuv: shartnoma sanasi bo'yicha, narx = asosiy qarz +
   // boshlang'ich. Nasiya va qarzga sotish alohida sanaladi - ikkisining
   // tabiati boshqa, bitta "nasiya" raqamiga qo'shib yuborish hisobotni
@@ -330,31 +337,31 @@ export async function readProfit(branchId: string, oyRaw: string, oylar = 6) {
   // Sotuvchi va kanal natijalari (TZ REP). Nasiya va naqd alohida
   // hisoblanadi, keyin bitta qatorga birlashtiriladi.
   const kesim = async (ustun: "seller" | "channel") => {
-    const nas = await q(
+    const nas = await qOy(
       `SELECT COALESCE(NULLIF(c.${ustun},''),'(ko''rsatilmagan)') nom, count(*) dona,
  COALESCE(sum(COALESCE(c.principal,c.total-c.down_payment)+c.down_payment),0) narx,
  COALESCE(sum(i.cost),0) tannarx, COALESCE(sum(COALESCE(c.markup,0)),0) ustama
  FROM contracts c JOIN inventory i ON i.id=c.inventory_id AND i.tenant_id=c.tenant_id AND i.branch_id=c.branch_id
  WHERE c.tenant_id=$1 AND c.branch_id=$2 AND c.kind='nasiya'
- AND c.start_date>=$4::date AND c.start_date<$4::date+interval '1 month'
+ AND c.start_date>=$3::date AND c.start_date<$3::date+interval '1 month'
  GROUP BY 1`,
     );
-    const qrz = await q(
+    const qrz = await qOy(
       `SELECT COALESCE(NULLIF(c.${ustun},''),'(ko''rsatilmagan)') nom, count(*) dona,
  COALESCE(sum(COALESCE(c.principal,c.total-c.down_payment)+c.down_payment),0) narx,
  COALESCE(sum(i.cost),0) tannarx
  FROM contracts c JOIN inventory i ON i.id=c.inventory_id AND i.tenant_id=c.tenant_id AND i.branch_id=c.branch_id
  WHERE c.tenant_id=$1 AND c.branch_id=$2 AND c.kind='qarz'
- AND c.start_date>=$4::date AND c.start_date<$4::date+interval '1 month'
+ AND c.start_date>=$3::date AND c.start_date<$3::date+interval '1 month'
  GROUP BY 1`,
     );
-    const naq = await q(
+    const naq = await qOy(
       `SELECT COALESCE(NULLIF(sale.${ustun},''),'(ko''rsatilmagan)') nom, count(*) dona,
  COALESCE(sum(sale.amount),0) narx, COALESCE(sum(i.cost),0) tannarx
  FROM cash_sales sale JOIN inventory i ON i.id=sale.inventory_id AND i.tenant_id=sale.tenant_id AND i.branch_id=sale.branch_id
  WHERE sale.tenant_id=$1 AND sale.branch_id=$2
- AND (sale.created_at AT TIME ZONE 'Asia/Tashkent')::date>=$4::date
- AND (sale.created_at AT TIME ZONE 'Asia/Tashkent')::date<$4::date+interval '1 month'
+ AND (sale.created_at AT TIME ZONE 'Asia/Tashkent')::date>=$3::date
+ AND (sale.created_at AT TIME ZONE 'Asia/Tashkent')::date<$3::date+interval '1 month'
  GROUP BY 1`,
     );
     const nomlar = [
@@ -418,8 +425,8 @@ export async function readProfit(branchId: string, oyRaw: string, oylar = 6) {
       `SELECT COALESCE(sum(CASE WHEN c.kind='nasiya' THEN COALESCE(c.principal,c.total-c.down_payment) END),0) asosiy,
  COALESCE(sum(COALESCE(c.markup,0)),0) ustama,
  COALESCE(sum(CASE WHEN c.kind='nasiya' THEN GREATEST(${qarzSql()},0) END),0) qoldiq,
- COALESCE(sum(CASE WHEN c.kind='qarz' THEN GREATEST(${qarzSql()},0) END),0) qarzQoldiq,
- COALESCE(sum(CASE WHEN c.kind='qarz' THEN GREATEST(${qarzCentsSql()},0) END),0) qarzSent
+ COALESCE(sum(CASE WHEN c.kind='qarz' THEN GREATEST(${qarzSql()},0) END),0) "qarzQoldiq",
+ COALESCE(sum(CASE WHEN c.kind='qarz' THEN GREATEST(${qarzCentsSql()},0) END),0) "qarzSent"
  FROM contracts c WHERE c.tenant_id=$1 AND c.branch_id=$2`,
       args,
     )

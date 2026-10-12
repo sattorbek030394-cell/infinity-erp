@@ -334,21 +334,36 @@ test(
       { headers: { cookie: outsiderCookie } },
     );
     assert.ok(!(await forbidden.text()).includes(input.imei));
+    // Har bir bo'lim ochilishi shart. Ilgari ro'yxatda beshtasi bor edi,
+    // shuning uchun Foyda va Investorlar ekranidagi SQL xatosi (parametr
+    // turi aniqlanmadi) CI dan o'tib ketgan - faqat brauzerda ko'rindi.
     for (const tab of [
       "dashboard",
       "inventory",
       "contracts",
+      "qarz",
       "payments",
+      "approvals",
+      "closures",
       "arrears",
-    ])
-      assert.equal(
-        (
-          await fetch(origin + "/erp?branch=" + b1 + "&tab=" + tab, {
-            headers: { cookie },
-          })
-        ).status,
-        200,
+      "cash",
+      "sales",
+      "suppliers",
+      "profit",
+      "investors",
+    ]) {
+      const page = await fetch(origin + "/erp?branch=" + b1 + "&tab=" + tab, {
+        headers: { cookie },
+      });
+      assert.equal(page.status, 200, tab + " ochilmadi");
+      // money(undefined) ekranga "son emas" deb chiqadi. SQL ustun nomi
+      // camelCase bo'lsa Postgres uni kichik harfga aylantiradi va maydon
+      // undefined bo'lib qoladi - aynan shunday xato Foyda ekranida bor edi.
+      assert.ok(
+        !(await page.text()).includes("son emas"),
+        tab + " ekranida son emas (NaN) ko‘rsatkich bor",
       );
+    }
     const get = async (path: string, auth = cookie) => {
       const r = await fetch(origin + path, { headers: { cookie: auth } });
       assert.equal(r.status, 200);

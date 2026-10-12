@@ -327,7 +327,17 @@ export function InvestorPanel({
               </select>
             </label>
             <button disabled={busy}>Yopish va taqsimlash</button>
-            {data.taklif ? (
+            {data.taklif && !data.taklif.kurs ? (
+              <p className="hisob">
+                {data.oy} uchun kurs yozilmagan, shuning uchun taklif
+                hisoblanmadi: sof foyda{" "}
+                <strong>
+                  {data.taklif.sofFoyda.toLocaleString("uz-UZ")} so‘m
+                </strong>{" "}
+                dollarga o‘tkazilmaydi. Avval shu oyning kursini kiriting
+                yoki natijani qo‘lda yozing.
+              </p>
+            ) : data.taklif ? (
               <p className="hisob">
                 {data.oy} uchun hisobot:{" "}
                 <strong>
