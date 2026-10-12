@@ -382,3 +382,41 @@ export async function reverseCash(raw: unknown) {
     return v.requestKey;
   });
 }
+
+/**
+ * Investor kapitalining pul tomoni (TZ 6.10).
+ *
+ * Kirim musbat, qaytarim va daromad olish manfiy. `amount` hamyonning
+ * o'z birligida: USD hamyoniga sent, so'm hamyoniga so'm. Tovar
+ * ko'rinishidagi kapital bu yerga umuman kelmaydi - pul harakati yo'q.
+ *
+ * Kategoriya foyda hisobotiga qarab tanlanadi: investorga berilgan pul
+ * xarajat emas, foyda taqsimoti - "Investorga to'lov" shu ro'yxatda.
+ */
+export async function postInvestorCash(
+  c: Pick<PoolClient, "query">,
+  s: Scope,
+  entryId: string,
+  day: string,
+  amount: number,
+  wallet: Wallet,
+) {
+  if (!amount) return;
+  await wallets(c, s);
+  await assertOpenDay(c, s, day);
+  await c.query(
+    `INSERT INTO cash_entries(id,tenant_id,branch_id,wallet,entry_date,amount_minor,
+ category,user_id,investor_entry_id) VALUES($1,$2,$3,$4,$5::date,$6,$7,$8,$9)`,
+    [
+      randomUUID(),
+      s.tenant_id,
+      s.branch_id,
+      wallet,
+      day,
+      amount,
+      amount > 0 ? "Investor kapitali" : "Investorga to‘lov",
+      s.userId,
+      entryId,
+    ],
+  );
+}

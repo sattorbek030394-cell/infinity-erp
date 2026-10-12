@@ -246,6 +246,19 @@ export function InvestorPanel({
               <input name="amount" type="number" required min={0.01} step={0.01} />
             </label>
             <label>
+              Hamyon
+              <select name="wallet" defaultValue="cash_usd">
+                <option value="cash_usd">Naqd dollar</option>
+                <option value="cash_uzs">Naqd so‘m</option>
+                <option value="card_uzs">Karta (P2P)</option>
+                <option value="bank_uzs">Hisob raqam</option>
+              </select>
+            </label>
+            <label>
+              Kurs (dollar bo‘lmasa)
+              <input name="rate" type="number" min={1} step={1} />
+            </label>
+            <label>
               Sana
               <input name="day" type="date" required defaultValue={data.bugun} />
             </label>
@@ -255,8 +268,12 @@ export function InvestorPanel({
             </label>
             <button disabled={busy}>Saqlash</button>
             <p>
-              Tovar ko‘rinishidagi kapital tannarx bo‘yicha, tovar omborga
-              kirgan kun bilan yoziladi. Qaytarim: 10 kun oldin yozma
+              Summa har doim dollarda yoziladi. Pul harakati kassaga ham
+              tushadi — ikkinchi marta kiritish kerak emas; dollar
+              bo‘lmasa kurs majburiy. Tovar ko‘rinishidagi kapital
+              kassaga tegmaydi va uni Kirim bo‘limida “investor tovari”
+              deb yozish qulayroq: o‘sha yerda tannarx bo‘yicha o‘zi
+              hisobga tushadi. Qaytarim: 10 kun oldin yozma
               ogohlantirish, to‘lov oy yopilgandan keyin.
             </p>
           </form>

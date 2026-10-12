@@ -3734,6 +3734,53 @@ test(
       400,
     );
 
+    // Pul harakati kassaga ham tushadi: ikkinchi marta kiritish kerak
+    // emas. Dollarda kirgani naqd USD hamyoniga sentda tushadi.
+    const kassaYozuv = (
+      await pool.query(
+        `SELECT k.wallet,k.amount_minor,k.category,k.entry_date::text
+ FROM cash_entries k JOIN investor_entries e ON e.id=k.investor_entry_id
+ WHERE e.investor_id=$1`,
+        [a],
+      )
+    ).rows;
+    assert.equal(kassaYozuv.length, 1);
+    assert.equal(kassaYozuv[0].wallet, "cash_usd");
+    assert.equal(Number(kassaYozuv[0].amount_minor), 100_000);
+    assert.equal(kassaYozuv[0].category, "Investor kapitali");
+    assert.equal(kassaYozuv[0].entry_date, "2026-06-01");
+    // Kassaga tushgan yozuv bekor qilinmaydi - teskari yozuv kerak.
+    const pulYozuv = (
+      await pool.query(
+        "SELECT id FROM investor_entries WHERE investor_id=$1 LIMIT 1",
+        [a],
+      )
+    ).rows[0].id;
+    assert.equal(
+      (
+        await inv({
+          action: "void",
+          entryId: pulYozuv,
+          reason: "Kassaga tushgan yozuvni urinib ko‘ramiz",
+        })
+      ).status,
+      400,
+    );
+    // So'mdagi harakatda kurs majburiy.
+    assert.equal(
+      (
+        await inv({
+          action: "entry",
+          investorId: b,
+          day: "2026-06-18",
+          kind: "capital",
+          amount: "100",
+          wallet: "cash_uzs",
+        })
+      ).status,
+      400,
+    );
+
     // Iyunni kunlik o'rtacha kapital bilan yopamiz: 300 $ taqsimlanadi.
     // A ning kapital-kunlari 30 kun x 1000 $, B ning 15 kun x 1000 $ -
     // nisbat 2:1, demak 200 $ va 100 $.

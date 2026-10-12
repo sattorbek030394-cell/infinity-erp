@@ -4,6 +4,8 @@ import { scope } from "./auth";
 import { db, transaction } from "./db";
 import { can } from "./domain";
 import { QOIDALAR } from "./investor-names";
+import { postInvestorCash } from "./cash";
+import type { Wallet } from "./cash-domain";
 
 /**
  * Investor kapitali va oylik taqsimot (TZ 6.10).
@@ -38,18 +40,33 @@ export const investorSchema = z.object({
   note: z.string().trim().max(200).default(""),
 });
 
-export const entrySchema = z.object({
-  branchId: z.uuid(),
-  action: z.literal("entry"),
-  investorId: z.uuid(),
-  day: z.iso.date(),
-  // Qo'lda faqat kapital harakati kiritiladi; foyda va zarar oy
-  // yopilishida dastur tomonidan yoziladi.
-  kind: z.enum(["capital", "return", "payout"]),
-  form: z.enum(["cash", "goods"]).default("cash"),
-  amount: sent,
-  note: z.string().trim().max(200).default(""),
-});
+export const entrySchema = z
+  .object({
+    branchId: z.uuid(),
+    action: z.literal("entry"),
+    investorId: z.uuid(),
+    day: z.iso.date(),
+    // Qo'lda faqat kapital harakati kiritiladi; foyda va zarar oy
+    // yopilishida dastur tomonidan yoziladi.
+    kind: z.enum(["capital", "return", "payout"]),
+    form: z.enum(["cash", "goods"]).default("cash"),
+    amount: sent,
+    // Pul harakatida qaysi hamyon va - dollar bo'lmasa - qanday kurs
+    // bilan. Tovarda ikkisi ham kerak emas.
+    wallet: z
+      .enum(["cash_usd", "cash_uzs", "card_uzs", "bank_uzs"])
+      .default("cash_usd"),
+    // Bo'sh qoldirilsa "yo'q" degani: dollardagi harakatda kurs kerak
+    // emas, shuning uchun bo'sh matn nolga aylanib xato bermasin.
+    rate: z.preprocess(
+      (x) => (x === "" || x === null ? undefined : x),
+      z.coerce.number().int().min(1).max(100_000_000).optional(),
+    ),
+    note: z.string().trim().max(200).default(""),
+  })
+  .refine((v) => v.form === "goods" || v.wallet === "cash_usd" || v.rate, {
+    message: "So‘m yoki kartadagi harakatda kurs majburiy",
+  });
 
 export const voidSchema = z.object({
   branchId: z.uuid(),
@@ -193,19 +210,39 @@ export async function writeInvestor(raw: unknown) {
           s.userId,
         ],
       );
+      // Pul harakati bo'lsa kassaga ham tushadi: bitta yozuv, ikki
+      // joyda ko'rinadi. Tovar kassaga tegmaydi.
+      if (v.form === "cash")
+        await postInvestorCash(
+          c,
+          s,
+          id,
+          v.day,
+          ishora *
+            (v.wallet === "cash_usd"
+              ? v.amount
+              : Math.round((v.amount * v.rate!) / 100)),
+          v.wallet as Wallet,
+        );
     });
     return { id };
   }
   if (base.action === "void") {
     const v = voidSchema.parse(raw);
+    // Kassaga tushgan pul va hisoblangan yozuv bekor qilinmaydi: ikkisi
+    // ham boshqa joyda hisobga olingan. Tuzatish teskari yozuv bilan
+    // qilinadi - yopilgan oy qoidasi bilan bir xil.
     const r = await db.query(
       `UPDATE investor_entries SET voided_at=now(),voided_by=$4,void_reason=$5
  WHERE id=$1 AND tenant_id=$2 AND branch_id=$3 AND voided_at IS NULL
- AND form<>'accrual'`,
+ AND form<>'accrual'
+ AND NOT EXISTS(SELECT 1 FROM cash_entries k WHERE k.investor_entry_id=$1)`,
       [v.entryId, s.tenant_id, s.branch_id, s.userId, v.reason],
     );
     if (!r.rowCount)
-      throw new Error("Yozuv topilmadi yoki hisoblangan yozuv bekor qilinmaydi");
+      throw new Error(
+        "Bekor qilinmaydi: yozuv topilmadi, hisoblangan yoki kassaga tushgan. Teskari yozuv kiriting",
+      );
     return { id: v.entryId };
   }
   if (base.action === "close") {
