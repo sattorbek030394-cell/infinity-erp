@@ -275,6 +275,7 @@ export function ProfitPanel({
                 <th>Naqd marjasi</th>
                 <th>Qarzga (dona / marja)</th>
                 <th>Jami marja</th>
+                {report.bonusBp ? <th>Bonus</th> : null}
               </tr>
             </thead>
             <tbody>
@@ -299,11 +300,19 @@ export function ProfitPanel({
                   <td>
                     <strong>{money(r.marja)}</strong>
                   </td>
+                  {report.bonusBp ? (
+                    <td>
+                      <strong>{money(r.bonus)}</strong>
+                    </td>
+                  ) : null}
                 </tr>
               ))}
             </tbody>
           </table>
           <p>
+            {report.bonusBp
+              ? `Bonus — marjaning ${report.bonusBp / 100}% i (sozlamalarda belgilanadi). Hisoblab ko‘rsatiladi, to‘lov kassa orqali xarajat sifatida yoziladi. `
+              : ""}
             “Kelishilgan ustama” — shu oyda tuzilgan shartnomalarning jami
             ustamasi. U to‘lovlar tushgani sari daromadga aylanadi, shuning
             uchun marjaga qo‘shilmagan.

@@ -32,6 +32,24 @@ export const settingsSchema = z.discriminatedUnion("action", [
       role: staffRole,
     })
     .strict(),
+  // Narx va bonus sozlamalari (TZ SALE). Nol - o'chirilgan.
+  z
+    .object({
+      ...branch,
+      action: z.literal("narx"),
+      // Ekranda foiz, bazada bazis punkt: 15% -> 1500.
+      minMarginPct: z.coerce
+        .number()
+        .min(0)
+        .max(100)
+        .transform((v) => Math.round(v * 100)),
+      sellerBonusPct: z.coerce
+        .number()
+        .min(0)
+        .max(100)
+        .transform((v) => Math.round(v * 100)),
+    })
+    .strict(),
   z
     .object({
       ...branch,

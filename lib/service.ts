@@ -14,6 +14,7 @@ import {
   qarzSotuvHisobi,
   qarzTolovi,
   sentga,
+  narxTekshir,
   type Amal,
 } from "./domain";
 import type { z } from "zod";
@@ -46,6 +47,18 @@ export async function createRecord(
   return transaction((c) => writeRecord(c, s, kind, input));
 }
 type Shartnoma = z.infer<typeof contractSchema>;
+
+/** Minimal marja chegarasi, bazis punktda. Nol - cheklov yo'q. */
+async function minMarja(c: Pick<PoolClient, "query">, s: Scope) {
+  return Number(
+    (
+      await c.query(
+        "SELECT min_margin_bp FROM nasiya_settings WHERE tenant_id=$1 AND branch_id=$2",
+        [s.tenant_id, s.branch_id],
+      )
+    ).rows[0]?.min_margin_bp ?? 0,
+  );
+}
 
 /** Yetkazib beruvchi nomi bo'yicha topiladi yoki yaratiladi. */
 async function yetkazibBeruvchi(
@@ -345,11 +358,20 @@ async function writeRecord(
   } else if (kind === "contracts") {
     const v = contractSchema.parse(input);
     const item = await c.query(
-      "SELECT id FROM inventory WHERE id=$1 AND tenant_id=$2 AND branch_id=$3 AND status='available' FOR UPDATE",
+      "SELECT id,cost FROM inventory WHERE id=$1 AND tenant_id=$2 AND branch_id=$3 AND status='available' FOR UPDATE",
       [v.inventoryId, s.tenant_id, s.branch_id],
     );
     if (!item.rowCount) throw new Error("Mahsulot mavjud emas");
     const { total, principal, markup, bp } = await nasiyaShartlari(c, s, v);
+    // Minimal marja: nasiya ustamasi hisobga olinmaydi - qurilmaning
+    // o'z narxi tannarxdan yetarlicha oshsin.
+    const narxSabab = narxTekshir({
+      narx: principal + v.downPayment,
+      tannarx: Number(item.rows[0].cost),
+      bp: await minMarja(c, s),
+      reason: v.priceOverrideReason,
+      canOverride: can(s.role, "limit.override"),
+    });
     const customerId = v.customerName ? await mijozYoz(c, s, v) : null;
     const override = customerId
       ? await limitTekshir(c, s, customerId, principal + markup, v)
@@ -360,9 +382,10 @@ async function writeRecord(
     await c.query(
       `INSERT INTO contracts(id,tenant_id,branch_id,inventory_id,customer_id,customer_label,number,
  total,down_payment,principal,markup,monthly_rate_bp,months,start_date,
- limit_override_by,limit_override_reason,seller,channel)
+ limit_override_by,limit_override_reason,seller,channel,
+ price_override_by,price_override_reason)
  VALUES($1,$2,$3,$4,$5,$6,(SELECT COALESCE(max(number),0)+1 FROM contracts WHERE tenant_id=$2),
- $7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17)`,
+ $7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17,$18,$19)`,
       [
         id,
         s.tenant_id,
@@ -381,6 +404,8 @@ async function writeRecord(
         override,
         v.seller,
         v.channel,
+        narxSabab ? s.userId : null,
+        narxSabab,
       ],
     );
     for (const p of schedule(total, v.downPayment, v.months, v.startDate))
@@ -398,7 +423,7 @@ async function writeRecord(
     // Qarzga sotish: ustamasiz, bitta muddatli, qarzi dollarda.
     const v = qarzSotuvSchema.parse(input);
     const item = await c.query(
-      "SELECT id FROM inventory WHERE id=$1 AND tenant_id=$2 AND branch_id=$3 AND status='available' FOR UPDATE",
+      "SELECT id,cost FROM inventory WHERE id=$1 AND tenant_id=$2 AND branch_id=$3 AND status='available' FOR UPDATE",
       [v.inventoryId, s.tenant_id, s.branch_id],
     );
     if (!item.rowCount) throw new Error("Mahsulot mavjud emas");
@@ -406,6 +431,13 @@ async function writeRecord(
       priceCents: sentga(v.priceUsd),
       rate: v.rate,
       tolovlar: v.tolovlar,
+    });
+    const narxSababQarz = narxTekshir({
+      narx: h.total,
+      tannarx: Number(item.rows[0].cost),
+      bp: await minMarja(c, s),
+      reason: v.priceOverrideReason,
+      canOverride: can(s.role, "limit.override"),
     });
     const customerId = v.customerName ? await mijozYoz(c, s, v) : null;
     // Limit so'mda tekshiriladi: qarz ham mijozning xavfi, nasiya bilan
@@ -417,10 +449,11 @@ async function writeRecord(
       `INSERT INTO contracts(id,tenant_id,branch_id,inventory_id,customer_id,customer_label,number,
  total,down_payment,principal,markup,monthly_rate_bp,months,start_date,
  limit_override_by,limit_override_reason,seller,channel,
- kind,total_cents,down_cents,sale_rate,due_date)
+ kind,total_cents,down_cents,sale_rate,due_date,
+ price_override_by,price_override_reason)
  VALUES($1,$2,$3,$4,$5,$6,(SELECT COALESCE(max(number),0)+1 FROM contracts WHERE tenant_id=$2),
  $7,$8,$9,0,0,1,(now() AT TIME ZONE 'Asia/Tashkent')::date,$10,$11,$12,$13,
- 'qarz',$14,$15,$16,$17)`,
+ 'qarz',$14,$15,$16,$17,$18,$19)`,
       [
         id,
         s.tenant_id,
@@ -439,6 +472,8 @@ async function writeRecord(
         h.downCents,
         v.rate,
         v.dueDate,
+        narxSababQarz ? s.userId : null,
+        narxSababQarz,
       ],
     );
     // Bitta "to'lov" - muddati kelganda Qarzdorlarda kechikkan bo'lib

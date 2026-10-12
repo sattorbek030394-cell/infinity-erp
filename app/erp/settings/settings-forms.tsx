@@ -18,12 +18,16 @@ export function SettingsForms({
   members,
   available,
   actorId,
+  minMarginBp,
+  sellerBonusBp,
 }: {
   branchId: string;
   name: string;
   members: Member[];
   available: { id: string; email: string }[];
   actorId: string;
+  minMarginBp: number;
+  sellerBonusBp: number;
 }) {
   const router = useRouter();
   const [busy, setBusy] = useState(false);
@@ -86,6 +90,43 @@ export function SettingsForms({
               <input name="name" defaultValue={name} required maxLength={80} />
             </label>
             <button>Nomni saqlash</button>
+          </form>
+        </section>
+        <section className="detailsection">
+          <h2>Narx va bonus</h2>
+          <p>
+            Ikkisi ham foiz, nol — o‘chirilgan. <strong>Minimal marja</strong>:
+            sotish narxi tannarxdan shu foizdan kam oshsa sotuv bloklanadi;
+            rahbar sababini yozib o‘tkazishi mumkin va sabab yozuvda qoladi.
+            <strong> Sotuvchi bonusi</strong>: sotuv marjasining shu foizi,
+            foyda hisobotida sotuvchilar jadvalida hisoblanib ko‘rsatiladi.
+            Nasiya ustamasi bonusga kirmaydi — u hali tushmagan pul.
+          </p>
+          <form className="entry" onSubmit={submit}>
+            <input type="hidden" name="action" value="narx" />
+            <label>
+              Minimal marja, %
+              <input
+                name="minMarginPct"
+                type="number"
+                min={0}
+                max={100}
+                step={0.01}
+                defaultValue={minMarginBp / 100}
+              />
+            </label>
+            <label>
+              Sotuvchi bonusi, %
+              <input
+                name="sellerBonusPct"
+                type="number"
+                min={0}
+                max={100}
+                step={0.01}
+                defaultValue={sellerBonusBp / 100}
+              />
+            </label>
+            <button>Saqlash</button>
           </form>
         </section>
         <section className="detailsection">

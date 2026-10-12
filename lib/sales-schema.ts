@@ -18,5 +18,12 @@ export const saleSchema = z
     customerLabel: z.string().trim().max(80).default(""),
     seller: z.string().trim().max(80).default(""),
     channel: z.string().trim().max(40).default(""),
+    // Minimal marjadan past narxga rahbar sababi (TZ SALE).
+    priceOverrideReason: z
+      .string()
+      .trim()
+      .min(5)
+      .max(160)
+      .optional(),
   })
   .strict();

@@ -4138,3 +4138,119 @@ test(
     );
   },
 );
+
+test(
+  "HTTP: minimal marja va sotuvchi bonusi (TZ SALE)",
+  { skip: !connection },
+  async () => {
+    const auth = await login(admin + "@example.invalid");
+    const kassirAuth = await login(kassir + "@example.invalid");
+    // Chegarani 15% qilib qo'yamiz: tannarx 1 000 000 -> marja kamida
+    // 150 000 bo'lishi kerak.
+    await pool.query(
+      "UPDATE nasiya_settings SET min_margin_bp=1500, seller_bonus_bp=300 WHERE branch_id=$1",
+      [b1],
+    );
+    const qurilma = async (imei: string) =>
+      (
+        await (
+          await post(
+            "inventory",
+            { imei, model: "SYNTHETIC NARX", cost: 1_000_000 },
+            b1,
+            auth,
+          )
+        ).json()
+      ).id as string;
+    const sot = (data: Record<string, unknown>, cookie = auth) =>
+      fetch(origin + "/api/sales", {
+        method: "POST",
+        headers: { cookie, origin, "content-type": "application/json" },
+        body: JSON.stringify({
+          branchId: b1,
+          requestKey: randomUUID(),
+          method: "cash",
+          seller: "SYNTHETIC BONUS sotuvchi",
+          ...data,
+        }),
+      });
+    // Marja 100 000 - chegaradan past, sababsiz o'tmaydi.
+    const past = await sot({
+      inventoryId: await qurilma("777777777777771"),
+      amount: 1_100_000,
+    });
+    assert.equal(past.status, 400);
+    assert.ok(
+      (await past.json()).error.includes("past"),
+      "xato sababi aytilsin",
+    );
+    // Kassirda past narxga ruxsat yo'q.
+    assert.equal(
+      (
+        await sot(
+          {
+            inventoryId: await qurilma("777777777777772"),
+            amount: 1_100_000,
+            priceOverrideReason: "Kassir urinib ko‘radi",
+          },
+          kassirAuth,
+        )
+      ).status,
+      400,
+    );
+    // Rahbar sababini yozib o'tkazadi va sabab yozuvda qoladi.
+    const ruxsat = await qurilma("777777777777773");
+    assert.equal(
+      (
+        await sot({
+          inventoryId: ruxsat,
+          amount: 1_100_000,
+          priceOverrideReason: "Ekrani chizilgan, tezroq sotish kerak",
+        })
+      ).status,
+      200,
+    );
+    const yozuv = (
+      await pool.query(
+        "SELECT price_override_reason r FROM cash_sales WHERE inventory_id=$1",
+        [ruxsat],
+      )
+    ).rows[0];
+    assert.ok(yozuv.r.includes("Ekrani chizilgan"));
+    // Chegaradan yuqori narx sababsiz o'tadi.
+    const yaxshi = await qurilma("777777777777774");
+    assert.equal(
+      (await sot({ inventoryId: yaxshi, amount: 1_200_000 })).status,
+      200,
+    );
+    assert.equal(
+      (
+        await pool.query(
+          "SELECT price_override_reason r FROM cash_sales WHERE inventory_id=$1",
+          [yaxshi],
+        )
+      ).rows[0].r,
+      null,
+      "normal narxda sabab yozilmaydi",
+    );
+    // Bonus: marjaning 3% i. 100 000 + 200 000 = 300 000 marja -> 9 000.
+    const oy = (
+      await pool.query(
+        "SELECT to_char((now() AT TIME ZONE 'Asia/Tashkent')::date,'YYYY-MM') oy",
+      )
+    ).rows[0].oy;
+    const html = await (
+      await fetch(origin + "/erp?branch=" + b1 + "&tab=profit&oy=" + oy, {
+        headers: { cookie: auth },
+      })
+    ).text();
+    assert.ok(html.includes("SYNTHETIC BONUS sotuvchi"));
+    assert.ok(html.includes("Bonus"), "bonus ustuni ko‘rinsin");
+    assert.ok(html.includes("9 000"), "bonus hisoblansin");
+    // Chegarani qaytarib o'chiramiz.
+    await pool.query(
+      "UPDATE nasiya_settings SET min_margin_bp=0, seller_bonus_bp=0 WHERE branch_id=$1",
+      [b1],
+    );
+  },
+);

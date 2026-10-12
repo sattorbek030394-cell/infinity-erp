@@ -43,6 +43,8 @@ export default async function SettingsPage({
           members={data.members}
           available={data.available}
           actorId={data.actorId}
+          minMarginBp={data.minMarginBp}
+          sellerBonusBp={data.sellerBonusBp}
         />
       </main>
     </>

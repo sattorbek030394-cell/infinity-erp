@@ -387,7 +387,20 @@ export async function readProfit(branchId: string, oyRaw: string, oylar = 6) {
       })
       .sort((a, b) => b.marja + b.ustama - (a.marja + a.ustama));
   };
-  const sotuvchilar = await kesim("seller");
+  // Sotuvchi bonusi: marjaning sozlamadagi foizi. Nasiya ustamasi
+  // kirmaydi - u hali tushmagan pul, bonus esa tushgan marjadan.
+  const bonusBp = Number(
+    (
+      await db.query(
+        "SELECT seller_bonus_bp FROM nasiya_settings WHERE tenant_id=$1 AND branch_id=$2",
+        args,
+      )
+    ).rows[0]?.seller_bonus_bp ?? 0,
+  );
+  const sotuvchilar = (await kesim("seller")).map((r) => ({
+    ...r,
+    bonus: Math.round((r.marja * bonusBp) / 10000),
+  }));
   const kanallar = await kesim("channel");
 
   // Ombor va nasiya portfeli - oyga bog'liq emas, hozirgi holat.
@@ -435,6 +448,7 @@ export async function readProfit(branchId: string, oyRaw: string, oylar = 6) {
     bugun,
     reja,
     qolganKun,
+    bonusBp,
     sotuvchilar,
     kanallar,
     bugungi: {

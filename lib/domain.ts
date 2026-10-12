@@ -115,6 +115,8 @@ export const contractSchema = z
     startDate: z.iso.date(),
     // Mijoz limitidan oshsa rahbar sababini yozib o'tkazadi (taklif 3.1).
     limitOverrideReason: ixtiyoriy(z.string().trim().min(5).max(160)),
+    // Minimal marjadan past narxga rahbar sababi (TZ SALE).
+    priceOverrideReason: ixtiyoriy(z.string().trim().min(5).max(160)),
     // Kim sotdi va mijoz qayerdan keldi (TZ SALE-01).
     seller: matn(80),
     channel: matn(40),
@@ -158,6 +160,7 @@ export const qarzSotuvSchema = z.object({
     .max(4)
     .default([]),
   limitOverrideReason: ixtiyoriy(z.string().trim().min(5).max(160)),
+  priceOverrideReason: ixtiyoriy(z.string().trim().min(5).max(160)),
   seller: matn(80),
   channel: matn(40),
 });
@@ -537,6 +540,37 @@ export function nasiyaTotals(
     // biroz boshqacha bo'lishi mumkin - aniq jadvalni schedule() beradi.
     monthly: Math.round((principal + markup) / months),
   };
+}
+
+/**
+ * Minimal marja tekshiruvi (TZ SALE).
+ *
+ * `narx` - qurilmaning o'z narxi, nasiya ustamasi bilan emas: ustama
+ * pulning vaqtiga to'lov, savdoning marjasi emas. Chegara tannarxdan
+ * foiz bilan beriladi, chunki arzon va qimmat telefon uchun bitta
+ * so'mdagi chegara ma'nosiz bo'ladi.
+ *
+ * Chegara noldan katta bo'lsa va marja yetmasa: sabab bo'lmasa sotuv
+ * bloklanadi, sabab bo'lsa-yu huquq bo'lmasa ham bloklanadi. Qaytgan
+ * qiymat - yozuvda saqlanadigan sabab.
+ */
+export function narxTekshir(v: {
+  narx: number;
+  tannarx: number;
+  bp: number;
+  reason?: string;
+  canOverride: boolean;
+}) {
+  if (!v.bp || v.tannarx <= 0) return null;
+  const marja = v.narx - v.tannarx;
+  const kerak = Math.ceil((v.tannarx * v.bp) / 10000);
+  if (marja >= kerak) return null;
+  if (!v.reason)
+    throw new Error(
+      `Narx juda past: marja ${marja.toLocaleString("uz-UZ")}, kamida ${kerak.toLocaleString("uz-UZ")} bo‘lishi kerak`,
+    );
+  if (!v.canOverride) throw new Error("Past narxga ruxsat rahbarda");
+  return v.reason;
 }
 
 export function assertPayment(amount: number, balance: number) {
