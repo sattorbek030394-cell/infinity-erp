@@ -3,7 +3,7 @@ import { cashMoney } from "../../lib/cash-domain";
 import type { readProfit } from "../../lib/profit";
 import { TargetForm } from "./target-form";
 import { TelegramText } from "./telegram-text";
-import { METRIC_NOMI } from "../../lib/targets";
+import { METRIC_NOMI } from "../../lib/target-names";
 
 const OYLAR = [
   "yanvar",

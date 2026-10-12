@@ -2,7 +2,7 @@
 import { useState } from "react";
 import { useRouter } from "next/navigation";
 import { money } from "../../lib/filters";
-import { METRIC_NOMI, DONA, type Metric } from "../../lib/targets";
+import { METRIC_NOMI, DONA, type Metric } from "../../lib/target-names";
 
 type Qator = {
   metric: Metric;

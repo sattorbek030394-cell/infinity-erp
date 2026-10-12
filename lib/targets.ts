@@ -1,26 +1,9 @@
 import { z } from "zod";
 import { scope } from "./auth";
 import { db, transaction } from "./db";
+import { METRICS, type Metric } from "./target-names";
 
-export const METRICS = [
-  "sotuv_dona_naqd",
-  "sotuv_dona_nasiya",
-  "sotuv_summa_naqd",
-  "sotuv_summa_nasiya",
-  "undirish",
-  "sof_foyda",
-] as const;
-export type Metric = (typeof METRICS)[number];
-export const METRIC_NOMI: Record<Metric, string> = {
-  sotuv_dona_naqd: "Sotuv dona — naqd",
-  sotuv_dona_nasiya: "Sotuv dona — nasiya",
-  sotuv_summa_naqd: "Sotuv summasi — naqd",
-  sotuv_summa_nasiya: "Sotuv summasi — nasiya",
-  undirish: "Nasiya undirish",
-  sof_foyda: "Sof foyda",
-};
-/** Dona bilan o'lchanadigan ko'rsatkichlar - so'm formati qo'llanmaydi. */
-export const DONA: Metric[] = ["sotuv_dona_naqd", "sotuv_dona_nasiya"];
+export { METRICS, METRIC_NOMI, DONA, type Metric } from "./target-names";
 
 export const targetSchema = z
   .object({
