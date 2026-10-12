@@ -73,6 +73,7 @@ export default async function ERP({
       "dashboard",
       "inventory",
       "contracts",
+      "qarz",
       "payments",
       "approvals",
       "closures",
@@ -171,6 +172,7 @@ export default async function ERP({
             ["dashboard", "Dashboard"],
             ["inventory", "Ombor"],
             ["contracts", "Nasiya"],
+            ["qarz", "Qarzga sotish"],
             ["payments", "To‘lovlar"],
             ["approvals", "Tasdiq kutayotgan"],
             ["closures", "Erta yopilgan"],
@@ -372,6 +374,30 @@ export default async function ERP({
                 ) : null}
               </tbody>
             </table>
+          </>
+        ) : null}
+        {tab === "qarz" ? (
+          <>
+            <h1>Qarzga sotish</h1>
+            {can(data.role, "credit.sale") ? (
+              <RecordForm
+                branchId={branch}
+                kind="qarz"
+                kurs={data.kurs ? String(data.kurs) : ""}
+                items={data.items
+                  .filter((i) => i.status === "available")
+                  .map((i) => ({ id: i.id, label: i.model + " / " + i.imei }))}
+              />
+            ) : (
+              <p className="notice">
+                Qarzga sotish huquqi faqat rahbar va administratorda.
+              </p>
+            )}
+            <p>
+              Ustama va grafik yo‘q: mijoz bir necha hamyonga bo‘lib
+              to‘laydi, qolgani dollardagi qarz bo‘lib Qarzdorlarga
+              tushadi. Muddat o‘tsa kechikkan bo‘lib ko‘rinadi.
+            </p>
           </>
         ) : null}
         {tab === "contracts" ? (

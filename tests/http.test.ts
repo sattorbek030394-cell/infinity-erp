@@ -3477,3 +3477,141 @@ test(
     assert.ok(html.includes("rejasi:"));
   },
 );
+
+test(
+  "HTTP: qarzga sotish - dollardagi qarz, bir necha hamyon (TZ SALE-02)",
+  { skip: !connection },
+  async () => {
+    const auth = await login(admin + "@example.invalid");
+    const kassirAuth = await login(kassir + "@example.invalid");
+    const item = (
+      await (
+        await post(
+          "inventory",
+          {
+            imei: "733333333333333",
+            model: "SYNTHETIC QARZ",
+            cost: 12_000_000,
+          },
+          b1,
+          auth,
+        )
+      ).json()
+    ).id;
+    // Kassirda qarzga sotish huquqi yo'q: ustamasiz qarz berish - pul
+    // qarori, uni faqat rahbar va administrator qiladi.
+    assert.equal(
+      (
+        await post(
+          "qarz",
+          {
+            inventoryId: item,
+            customerName: "SYNTHETIC QARZ mijoz",
+            priceUsd: "1050",
+            rate: 12_000,
+            dueDate: "2026-12-01",
+            tolovlar: [{ method: "cash", amount: 1_000_000 }],
+          },
+          b1,
+          kassirAuth,
+        )
+      ).status,
+      400,
+    );
+    // Kurs 12 000, narx 1050 $, mijoz 500 $ naqd + 2 000 000 so'm naqd +
+    // 400 000 so'm karta to'laydi: qolgani 350 $ = 4 200 000 so'm.
+    const sotuv = await post(
+      "qarz",
+      {
+        inventoryId: item,
+        customerName: "SYNTHETIC QARZ mijoz",
+        phone1: "90-000-00-11",
+        priceUsd: "1050",
+        rate: 12_000,
+        dueDate: "2026-12-01",
+        seller: "SYNTHETIC sotuvchi",
+        tolovlar: [
+          { method: "cash_usd", amount: 50_000 },
+          { method: "cash", amount: 2_000_000 },
+          { method: "card", amount: 400_000 },
+        ],
+      },
+      b1,
+      auth,
+    );
+    assert.equal(sotuv.status, 200);
+    const contract = (await sotuv.json()).id;
+    const row = (
+      await pool.query("SELECT * FROM contracts WHERE id=$1", [contract])
+    ).rows[0];
+    assert.equal(row.kind, "qarz");
+    assert.equal(Number(row.total), 12_600_000);
+    assert.equal(Number(row.down_payment), 8_400_000);
+    assert.equal(Number(row.total_cents), 105_000);
+    assert.equal(Number(row.down_cents), 70_000);
+    assert.equal(Number(row.sale_rate), 12_000);
+    assert.equal(Number(row.markup), 0);
+    // Har hamyon o'z birligida kassaga tushadi.
+    const kassa = (
+      await pool.query(
+        "SELECT wallet,amount_minor FROM cash_entries WHERE contract_id=$1 ORDER BY wallet",
+        [contract],
+      )
+    ).rows.map((r) => [r.wallet, Number(r.amount_minor)]);
+    assert.deepEqual(kassa, [
+      ["card_uzs", 400_000],
+      ["cash_usd", 50_000],
+      ["cash_uzs", 2_000_000],
+    ]);
+    const qoldiq = async () =>
+      Number(
+        (
+          await pool.query(
+            `SELECT c.total_cents-c.down_cents
+ -COALESCE((SELECT sum(p.applied_cents) FROM payments p WHERE p.contract_id=c.id
+   AND p.status='approved' AND p.voided_at IS NULL),0) sent
+ FROM contracts c WHERE c.id=$1`,
+            [contract],
+          )
+        ).rows[0].sent,
+      );
+    assert.equal(await qoldiq(), 35_000, "qolgan qarz 350 $");
+
+    // So'mda to'lov: kurs bilan dollarga o'tkaziladi.
+    const tolov = async (data: Record<string, unknown>) =>
+      post(
+        "payments",
+        { contractId: contract, requestKey: randomUUID(), ...data },
+        b1,
+        auth,
+      );
+    assert.equal((await tolov({ amount: 2_000_000, method: "cash" })).status, 400,
+      "kurssiz to‘lov qabul qilinmaydi");
+    assert.equal(
+      (await tolov({ amount: 2_000_000, method: "cash", rate: 12_000 })).status,
+      200,
+    );
+    assert.equal(await qoldiq(), 18_333, "2 mln so‘m 166,67 $ ni yopadi");
+
+    // Kurs ko'tarildi: qolgan 183,33 $ endi ko'proq so'm turadi, lekin
+    // dollardagi qarz o'sha-o'sha va aynan nolga tushadi.
+    assert.equal(
+      (await tolov({ amount: 2_291_625, method: "cash", rate: 12_500 })).status,
+      200,
+    );
+    assert.equal(await qoldiq(), 0, "qarz aynan nolga tushadi");
+    const somQoldiq = Number(
+      (
+        await pool.query(
+          "SELECT " +
+            "(CASE WHEN c.kind='qarz' THEN round((c.total_cents-c.down_cents" +
+            "-COALESCE((SELECT sum(p.applied_cents) FROM payments p WHERE p.contract_id=c.id" +
+            " AND p.status='approved' AND p.voided_at IS NULL),0))*c.sale_rate/100.0)::bigint" +
+            " ELSE 0 END) q FROM contracts c WHERE c.id=$1",
+          [contract],
+        )
+      ).rows[0].q,
+    );
+    assert.equal(somQoldiq, 0, "so‘mdagi qoldiq ham nol");
+  },
+);

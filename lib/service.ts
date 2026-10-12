@@ -10,6 +10,10 @@ import {
   assertPayment,
   can,
   tasdiqAmal,
+  qarzSotuvSchema,
+  qarzSotuvHisobi,
+  qarzTolovi,
+  sentga,
   type Amal,
 } from "./domain";
 import type { z } from "zod";
@@ -17,7 +21,7 @@ import type { PoolClient } from "pg";
 import { postCashReceipt, postPurchase } from "./cash";
 import { minorUnits, tushumMinor } from "./cash-domain";
 import { kunlikKurs } from "./kurs";
-import { qarzSql } from "./qarz-sql";
+import { qarzSql, qarzCentsSql } from "./qarz-sql";
 type Scope = {
   tenant_id: string;
   branch_id: string;
@@ -34,6 +38,7 @@ export async function createRecord(
   const amal = {
     inventory: "inventory.create",
     contracts: "contract.create",
+    qarz: "credit.sale",
     payments: "payment.create",
   }[kind] as Amal | undefined;
   if (!amal) throw new Error("Noto‘g‘ri modul");
@@ -360,6 +365,71 @@ async function writeRecord(
       v.inventoryId,
     ]);
     await postCashReceipt(c, s, id, v.downPayment, v.downPaymentMethod, "down");
+  } else if (kind === "qarz") {
+    // Qarzga sotish: ustamasiz, bitta muddatli, qarzi dollarda.
+    const v = qarzSotuvSchema.parse(input);
+    const item = await c.query(
+      "SELECT id FROM inventory WHERE id=$1 AND tenant_id=$2 AND branch_id=$3 AND status='available' FOR UPDATE",
+      [v.inventoryId, s.tenant_id, s.branch_id],
+    );
+    if (!item.rowCount) throw new Error("Mahsulot mavjud emas");
+    const h = qarzSotuvHisobi({
+      priceCents: sentga(v.priceUsd),
+      rate: v.rate,
+      tolovlar: v.tolovlar,
+    });
+    const customerId = v.customerName ? await mijozYoz(c, s, v) : null;
+    // Limit so'mda tekshiriladi: qarz ham mijozning xavfi, nasiya bilan
+    // bitta chegarada turadi.
+    const override = customerId
+      ? await limitTekshir(c, s, customerId, h.debtSom, v)
+      : null;
+    await c.query(
+      `INSERT INTO contracts(id,tenant_id,branch_id,inventory_id,customer_id,customer_label,number,
+ total,down_payment,principal,markup,monthly_rate_bp,months,start_date,
+ limit_override_by,limit_override_reason,seller,channel,
+ kind,total_cents,down_cents,sale_rate,due_date)
+ VALUES($1,$2,$3,$4,$5,$6,(SELECT COALESCE(max(number),0)+1 FROM contracts WHERE tenant_id=$2),
+ $7,$8,$9,0,0,1,(now() AT TIME ZONE 'Asia/Tashkent')::date,$10,$11,$12,$13,
+ 'qarz',$14,$15,$16,$17)`,
+      [
+        id,
+        s.tenant_id,
+        s.branch_id,
+        v.inventoryId,
+        customerId,
+        v.customerName ?? v.customerLabel,
+        h.total,
+        h.downSom,
+        h.debtSom,
+        override ? s.userId : null,
+        override,
+        v.seller,
+        v.channel,
+        sentga(v.priceUsd),
+        h.downCents,
+        v.rate,
+        v.dueDate,
+      ],
+    );
+    // Bitta "to'lov" - muddati kelganda Qarzdorlarda kechikkan bo'lib
+    // ko'rinishi uchun. Grafik yo'q, shuning uchun bitta qator.
+    await c.query("INSERT INTO installments VALUES($1,1,$2,$3)", [
+      id,
+      v.dueDate,
+      h.debtSom,
+    ]);
+    await c.query("UPDATE inventory SET status='sold' WHERE id=$1", [
+      v.inventoryId,
+    ]);
+    // Har hamyon o'z birligida kassaga tushadi. Bir hamyonga ikki qator
+    // kiritilgan bo'lsa qo'shib yuboriladi: kassada hamyonga bitta yozuv.
+    const hamyonlar = new Map<string, number>();
+    for (const t of v.tolovlar)
+      if (t.amount > 0)
+        hamyonlar.set(t.method, (hamyonlar.get(t.method) ?? 0) + t.amount);
+    for (const [method, amount] of hamyonlar)
+      await postCashReceipt(c, s, id, amount, method, "down");
   } else if (kind === "payments") {
     const v = paymentSchema.parse(input);
     const contract = await c.query(
@@ -383,15 +453,11 @@ async function writeRecord(
         throw new Error("Takroriy kalit mos emas");
       return p.id;
     }
-    const balance = Number(
-      (
-        await c.query(
-          `SELECT ${qarzSql()} balance FROM contracts c WHERE c.id=$1`,
-          [v.contractId],
-        )
-      ).rows[0].balance,
-    );
-    if (balance <= 0) throw new Error("Bu shartnomada qarz qolmagan");
+    // Qarzga sotishda qoldiq dollarda yuritiladi, shuning uchun so'mdagi
+    // to'lovga ham kurs kerak.
+    const qarzTuri = contract.rows[0].kind === "qarz";
+    if (qarzTuri && v.rate === undefined)
+      throw new Error("Qarzga sotuv to‘lovida kurs majburiy");
     // PAY-02: dollarda olingan to'lov to'lov kursi bilan so'mga
     // aylantiriladi; shartnoma kursi o'zgarmaydi.
     const usdCents =
@@ -404,17 +470,50 @@ async function writeRecord(
       throw new Error("To‘lov summasi noto‘g‘ri");
     // PAY-04: qarzdan ortiq summa rad etilmaydi - ortig'i mijoz avansi
     // bo'ladi. Qarz manfiy ko'rsatilmaydi.
-    const applied = Math.min(received, balance);
+    let applied: number,
+      appliedCents: number | null = null;
+    if (qarzTuri) {
+      const debtCents = Number(
+        (
+          await c.query(
+            `SELECT ${qarzCentsSql()} qoldiq FROM contracts c WHERE c.id=$1`,
+            [v.contractId],
+          )
+        ).rows[0].qoldiq,
+      );
+      if (debtCents <= 0) throw new Error("Bu shartnomada qarz qolmagan");
+      const t = qarzTolovi({
+        usdCents,
+        received,
+        rate: v.rate!,
+        debtCents,
+      });
+      if (t.cents < 1) throw new Error("To‘lov juda kichik");
+      appliedCents = t.cents;
+      applied = t.som;
+      assertPayment(applied, Math.round((debtCents * v.rate!) / 100));
+    } else {
+      const balance = Number(
+        (
+          await c.query(
+            `SELECT ${qarzSql()} balance FROM contracts c WHERE c.id=$1`,
+            [v.contractId],
+          )
+        ).rows[0].balance,
+      );
+      if (balance <= 0) throw new Error("Bu shartnomada qarz qolmagan");
+      applied = Math.min(received, balance);
+      assertPayment(applied, balance);
+    }
     const advance = received - applied;
-    assertPayment(applied, balance);
     // PAY-06: naqdni kassir, P2P/bankni rahbar tasdiqlaydi. Kirituvchining
     // o'zida shu huquq bo'lsa to'lov darhol hisobga kiradi va tasdiqlovchi
     // sifatida u yoziladi; bo'lmasa tasdiq kutadi va qarzni kamaytirmaydi.
     const tasdiq = can(s.role, tasdiqAmal(v.method));
     await c.query(
       `INSERT INTO payments(id,tenant_id,branch_id,contract_id,amount,advance_amount,method,request_key,
- evidence,created_by,status,decided_by,decided_at,usd_cents,rate)
- VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15)`,
+ evidence,created_by,status,decided_by,decided_at,usd_cents,rate,applied_cents)
+ VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16)`,
       [
         id,
         s.tenant_id,
@@ -430,7 +529,8 @@ async function writeRecord(
         tasdiq ? s.userId : null,
         tasdiq ? new Date() : null,
         usdCents,
-        usdCents === null ? null : v.rate,
+        usdCents === null && !qarzTuri ? null : v.rate,
+        appliedCents,
       ],
     );
     if (tasdiq) {

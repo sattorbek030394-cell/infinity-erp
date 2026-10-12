@@ -9,7 +9,7 @@ export async function POST(request: Request) {
     const v = z
       .object({
         branchId: z.uuid(),
-        kind: z.enum(["inventory", "contracts", "payments"]),
+        kind: z.enum(["inventory", "contracts", "qarz", "payments"]),
         data: z.unknown(),
       })
       .parse(body);

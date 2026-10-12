@@ -64,26 +64,31 @@ export const itemSchema = z
       (v.costUsd !== undefined && v.costRate !== undefined),
     { message: "Tannarxni so‘mda yoki dollar va kurs bilan yozing" },
   );
+/**
+ * Mijoz kartochkasi - nasiya va qarzga sotishda bir xil to'ldiriladi.
+ * Ism berilsa mijoz `customers` ga yoziladi; PNFL berilsa, shu PNFL
+ * bilan mavjud mijoz qayta ishlatiladi.
+ */
+const mijozMaydonlari = {
+  customerName: ixtiyoriy(z.string().trim().min(1).max(160)),
+  // Eski yo'l: hujjatsiz belgi. Ism berilmasa shu ishlatiladi.
+  customerLabel: ixtiyoriy(z.string().trim().min(1).max(80)),
+  pnfl: ixtiyoriy(z.string().regex(/^\d{5,20}$/, "PNFL 5-20 raqamdan bo‘lsin")),
+  passport: matn(40),
+  passportIssuer: matn(120),
+  passportDate: ixtiyoriy(z.iso.date()),
+  birthDate: ixtiyoriy(z.iso.date()),
+  phone1: matn(40),
+  phone2: matn(40),
+  address: matn(200),
+  icloudAccount: matn(120),
+  icloudPhone: matn(40),
+};
+
 export const contractSchema = z
   .object({
     inventoryId: z.uuid(),
-    // Mijoz kartochkasi. Ism berilsa mijoz `customers` ga yoziladi; PNFL
-    // berilsa, shu PNFL bilan mavjud mijoz qayta ishlatiladi.
-    customerName: ixtiyoriy(z.string().trim().min(1).max(160)),
-    // Eski yo'l: hujjatsiz belgi. Ism berilmasa shu ishlatiladi.
-    customerLabel: ixtiyoriy(z.string().trim().min(1).max(80)),
-    pnfl: ixtiyoriy(
-      z.string().regex(/^\d{5,20}$/, "PNFL 5-20 raqamdan bo‘lsin"),
-    ),
-    passport: matn(40),
-    passportIssuer: matn(120),
-    passportDate: ixtiyoriy(z.iso.date()),
-    birthDate: ixtiyoriy(z.iso.date()),
-    phone1: matn(40),
-    phone2: matn(40),
-    address: matn(200),
-    icloudAccount: matn(120),
-    icloudPhone: matn(40),
+    ...mijozMaydonlari,
     // Qurilma narxi. Berilsa ustamani dastur hisoblaydi.
     priceUzs: ixtiyoriy(money),
     // Eski yo'l: ustama qo'shilgan jami summa qo'lda kiritiladi.
@@ -109,6 +114,98 @@ export const contractSchema = z
     message: "Boshlang‘ich to‘lov narxdan kichik bo‘lsin",
   });
 export const TOLOV_USULLARI = ["cash", "cash_usd", "card", "transfer"] as const;
+
+/** Qarzga sotishda standart muddat. Sotuvda o'zgartirsa bo'ladi. */
+export const QARZ_MUDDAT_KUN = 14;
+
+/**
+ * Qarzga sotish (TZ SALE-02).
+ *
+ * Nasiyadan farqi uchta: ustama yo'q, grafik yo'q, va qolgan qarz
+ * DOLLARDA yuritiladi. Mijoz sotuv paytida bir necha hamyonga bo'lib
+ * to'lashi mumkin - naqd dollar, naqd so'm va karta birga kelishi odatiy
+ * hol, shuning uchun boshlang'ich to'lov bitta summa emas, ro'yxat.
+ *
+ * `amount` hamyonning o'z birligida: `cash_usd` ga sent, qolganiga so'm.
+ */
+export const qarzSotuvSchema = z.object({
+  inventoryId: z.uuid(),
+  ...mijozMaydonlari,
+  // Fakt sotish narxi, dollarda: "1050" yoki "1050.50".
+  priceUsd: z.string().regex(/^\d{1,9}(\.\d{1,2})?$/, "Narxni dollarda yozing"),
+  // Sotuv kunidagi kurs: so'mdagi summalarni shu bilan hisoblaymiz.
+  rate: z.coerce.number().int().min(1).max(100_000_000),
+  dueDate: z.iso.date(),
+  tolovlar: z
+    .array(
+      z.object({ method: z.enum(TOLOV_USULLARI), amount: money }),
+    )
+    .max(4)
+    .default([]),
+  limitOverrideReason: ixtiyoriy(z.string().trim().min(5).max(160)),
+  seller: matn(80),
+  channel: matn(40),
+});
+
+/** "1050.50" -> 105050 sent. */
+export const sentga = (s: string) => Math.round(Number(s) * 100);
+
+/**
+ * Qarzga sotuvning raqamlari.
+ *
+ * So'mdagi summalar sotuv kunidagi kurs bilan yoziladi (marja, kassa va
+ * mijoz limiti uchun), qarzning o'zi esa dollarda qoladi. Hamyonlarning
+ * dollar qiymati sentgacha yaxlitlanadi - eng ko'pi bilan bir sent farq,
+ * u oxirgi to'lovda yopiladi.
+ */
+export function qarzSotuvHisobi(v: {
+  priceCents: number;
+  rate: number;
+  tolovlar: { method: string; amount: number }[];
+}) {
+  const { priceCents, rate } = v;
+  let downSom = 0,
+    downCents = 0;
+  for (const t of v.tolovlar) {
+    if (t.amount <= 0) continue;
+    downSom += t.method === "cash_usd" ? Math.round((t.amount * rate) / 100) : t.amount;
+    downCents +=
+      t.method === "cash_usd" ? t.amount : Math.round((t.amount * 100) / rate);
+  }
+  const total = Math.round((priceCents * rate) / 100);
+  const debtCents = priceCents - downCents;
+  if (debtCents <= 0)
+    throw new Error("Qarz qolmadi - buni naqd sotuv sifatida yozing");
+  if (downSom >= total)
+    throw new Error("Tushgan pul sotish narxidan kam bo‘lsin");
+  return { total, downSom, downCents, debtCents, debtSom: total - downSom };
+}
+
+/**
+ * Dollardagi qarzga tushgan to'lov qancha qarzni yopadi.
+ *
+ * So'mda tushsa to'lov kunidagi kurs bilan dollarga o'tkaziladi; qarzdan
+ * ortiq qismi yopilmaydi (ortig'i avansga ketadi, PAY-04 kabi).
+ */
+export function qarzTolovi(v: {
+  /** Dollarda olingan bo'lsa sent, aks holda null. */
+  usdCents: number | null;
+  /** So'mda haqiqatda tushgan summa. */
+  received: number;
+  rate: number;
+  debtCents: number;
+}) {
+  if (v.usdCents !== null) {
+    const cents = Math.min(v.usdCents, v.debtCents);
+    return { cents, som: Math.round((cents * v.rate) / 100) };
+  }
+  // So'mda to'lagan: qarzning bugungi kursdagi narxidan ortig'i avansga.
+  // Sentni so'mdan hisoblaymiz, teskarisi emas - aks holda yaxlitlash
+  // tushgan puldan ko'proq yopib yuborishi mumkin.
+  const som = Math.min(v.received, Math.round((v.debtCents * v.rate) / 100));
+  const cents = Math.min(Math.round((som * 100) / v.rate), v.debtCents);
+  return { cents, som };
+}
 
 /** Qaysi rol shu usuldagi tushumni tasdiqlaydi (PAY-06). */
 export const tasdiqAmal = (method: string): Amal =>
@@ -166,6 +263,8 @@ export type Amal =
   | "payment.approve.cash"
   | "payment.approve.transfer"
   | "sale.create"
+  // Qarzga sotish: ustamasiz qarz berish - pul qarori, sotuv qarori emas
+  | "credit.sale"
   | "cash.entry"
   | "cash.reverse"
   | "settings.write"
@@ -191,6 +290,7 @@ const HUQUQLAR: Record<Rol, Amal[]> = {
     "payment.approve.cash",
     "payment.approve.transfer",
     "sale.create",
+    "credit.sale",
     "cash.entry",
     "cash.reverse",
     "settings.write",
@@ -209,6 +309,7 @@ const HUQUQLAR: Record<Rol, Amal[]> = {
     "payment.approve.cash",
     "payment.approve.transfer",
     "sale.create",
+    "credit.sale",
     "cash.entry",
     "cash.reverse",
     "limit.override",
