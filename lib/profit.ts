@@ -56,13 +56,13 @@ export type OylikFoyda = {
   sofFoyda: number;
 };
 
-const CHIQIM_EMAS = [
+export const CHIQIM_EMAS = [
   "Hamyonlar orasida o‘tkazma",
   "Telefon xaridi",
   "Yetkazib beruvchiga qarz to‘lovi",
   "Nasiya to‘lovini bekor qilish",
 ];
-const TAQSIMOT = ["Egasi oldi", "Investorga to‘lov"];
+export const TAQSIMOT = ["Egasi oldi", "Investorga to‘lov"];
 
 /** Oyning birinchi kuni, YYYY-MM-01. */
 const boshi = (oy: string) => oy + "-01";

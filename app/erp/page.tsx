@@ -29,6 +29,8 @@ import { ClosuresPanel } from "./closures-panel";
 import { readSuppliers } from "../../lib/supplier";
 import { SuppliersPanel } from "./suppliers-panel";
 import { readProfit } from "../../lib/profit";
+import { readProfitDetail } from "../../lib/profit-detail";
+import { ProfitDetailPanel } from "./profit-detail-panel";
 import { readInvestors, investorRoyxati } from "../../lib/investor";
 import { InvestorPanel } from "./investor-panel";
 import { ProfitPanel } from "./profit-panel";
@@ -102,8 +104,17 @@ export default async function ERP({
   const pending = tab === "approvals" ? await readPending(branch) : null;
   const closures = tab === "closures" ? await readClosures(branch) : null;
   const suppliers = tab === "suppliers" ? await readSuppliers(branch) : null;
+  // Foyda raqamining tafsiloti: ?tafsil=marja|ustama|kursfarqi|xarajat
+  const tafsil =
+    tab === "profit" && typeof query.tafsil === "string" && query.tafsil
+      ? await readProfitDetail(
+          branch,
+          typeof query.oy === "string" ? query.oy : "",
+          query.tafsil,
+        )
+      : null;
   const profit =
-    tab === "profit"
+    tab === "profit" && !tafsil
       ? await readProfit(
           branch,
           typeof query.oy === "string" ? query.oy : "",
@@ -531,6 +542,9 @@ export default async function ERP({
               Investor hisobini ko‘rish huquqi yo‘q.
             </p>
           )
+        ) : null}
+        {tab === "profit" && tafsil ? (
+          <ProfitDetailPanel data={tafsil} branch={branch} />
         ) : null}
         {tab === "profit" && profit ? (
           <ProfitPanel report={profit} branch={branch} />

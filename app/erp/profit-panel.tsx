@@ -75,6 +75,10 @@ export function ProfitPanel({
   const j = report.joriy;
   const usdSom = (sent: number) =>
     report.kurs ? Math.round((sent * report.kurs) / 100) : 0;
+  // Har raqamning ichini ochadigan havola: bitta songa ishonish uchun
+  // uning tarkibi ko'rinishi kerak.
+  const ich = (kind: string) =>
+    `/erp?branch=${branch}&tab=profit&oy=${report.oy}&tafsil=${kind}`;
   return (
     <>
       <h1>Foyda — {oyNomi(report.oy)}</h1>
@@ -92,7 +96,11 @@ export function ProfitPanel({
       <div className="cards">
         <section>
           <h2>Sotuv marjasi</h2>
-          <strong>{money(j.marja)}</strong>
+          <strong>
+            <a className="textlink" href={ich("marja")}>
+              {money(j.marja)}
+            </a>
+          </strong>
           <p>
             Nasiya {j.nasiyaSoni} dona: {money(j.nasiyaNarx - j.nasiyaTannarx)}{" "}
             • naqd {j.naqdSoni} dona: {money(j.naqdNarx - j.naqdTannarx)}
@@ -107,7 +115,11 @@ export function ProfitPanel({
         </section>
         <section>
           <h2>Nasiya ustama daromadi</h2>
-          <strong>{money(j.ustama)}</strong>
+          <strong>
+            <a className="textlink" href={ich("ustama")}>
+              {money(j.ustama)}
+            </a>
+          </strong>
           <p>
             Tushgan to‘lovdagi ustama ulushi
             {j.bekorUstama
@@ -117,7 +129,11 @@ export function ProfitPanel({
         </section>
         <section>
           <h2>Xarajat</h2>
-          <strong>{money(j.xarajatUzs + usdSom(j.xarajatUsd))}</strong>
+          <strong>
+            <a className="textlink" href={ich("xarajat")}>
+              {money(j.xarajatUzs + usdSom(j.xarajatUsd))}
+            </a>
+          </strong>
           <p>
             So‘mda {money(j.xarajatUzs)}
             {j.xarajatUsd
@@ -127,7 +143,11 @@ export function ProfitPanel({
         </section>
         <section>
           <h2>Kurs farqi</h2>
-          <strong>{money(j.kursFarqi)}</strong>
+          <strong>
+            <a className="textlink" href={ich("kursfarqi")}>
+              {money(j.kursFarqi)}
+            </a>
+          </strong>
           <p>
             {j.kursFarqi
               ? "Dollardagi qarz boshqa kursda to‘langanidan"
@@ -348,7 +368,9 @@ export function ProfitPanel({
       ) : null}
       <TelegramText text={telegram(report)} />
       <aside className="notice">
-        Bu boshqaruv hisobi, rasmiy buxgalteriya foydasi emas. Nasiya
+        Raqamning ustiga bossangiz uning ichi ochiladi — qaysi sotuv,
+        to‘lov yoki xarajatdan chiqqani qatorma-qator ko‘rinadi. Bu
+        boshqaruv hisobi, rasmiy buxgalteriya foydasi emas. Nasiya
         daromadi to‘lov tushganda tan olinadi, shartnoma tuzilganda emas.
         Boshlang‘ich to‘lov qurilma narxining bir qismi — nasiya daromadiga
         kirmaydi. Kurs farqi faqat qarzga sotishda tug‘iladi: u yerda qarz
