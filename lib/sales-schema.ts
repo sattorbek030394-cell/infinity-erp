@@ -1,4 +1,12 @@
 import { z } from "zod";
+export const saleVoidSchema = z
+  .object({
+    branchId: z.uuid(),
+    saleId: z.uuid(),
+    requestKey: z.uuid(),
+    reason: z.string().trim().min(5).max(160),
+  })
+  .strict();
 const amount = z
   .union([
     z.number(),

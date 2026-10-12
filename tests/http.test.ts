@@ -918,6 +918,124 @@ test(
     const saleBytes = Buffer.from(await salesExport.arrayBuffer());
     assert.ok(saleBytes.includes(Buffer.from("Naqd savdo")));
     assert.ok(saleBytes.includes(Buffer.from(saleId)));
+    const voidSale = async (
+      data: Record<string, unknown> = {},
+      auth = cookie,
+      source = origin,
+    ) =>
+      fetch(origin + "/api/sales/void", {
+        method: "POST",
+        headers: {
+          cookie: auth,
+          origin: source,
+          "content-type": "application/json",
+        },
+        body: JSON.stringify({
+          branchId: b1,
+          saleId,
+          requestKey: randomUUID(),
+          reason: "Synthetic mistaken sale",
+          ...data,
+        }),
+      });
+    for (const auth of ["", viewerCookie, outsiderCookie])
+      assert.equal((await voidSale({}, auth)).status, 403);
+    assert.equal((await voidSale({ branchId: b2 })).status, 400);
+    assert.equal((await voidSale({ branchId: b3 })).status, 403);
+    assert.equal(
+      (await voidSale({}, cookie, "https://evil.invalid")).status,
+      400,
+    );
+    assert.equal((await voidSale({ tenantId: tenant })).status, 400);
+    assert.equal((await voidSale({ reason: " " })).status, 400);
+    const saleVoidKey = randomUUID();
+    assert.deepEqual(
+      (
+        await Promise.all([
+          voidSale({ requestKey: saleVoidKey }),
+          voidSale({ requestKey: saleVoidKey }),
+        ])
+      ).map((r) => r.status),
+      [200, 200],
+    );
+    assert.equal((await voidSale()).status, 400);
+    assert.equal(
+      (await voidSale({ requestKey: saleVoidKey, reason: "Different reason" }))
+        .status,
+      400,
+    );
+    const reversal = (
+      await pool.query("SELECT * FROM cash_entries WHERE reversal_of=$1", [
+        saleReceipt[0].id,
+      ])
+    ).rows;
+    assert.equal(reversal.length, 1);
+    assert.equal(Number(reversal[0].amount_minor), -500000);
+    assert.equal(reversal[0].wallet, saleReceipt[0].wallet);
+    assert.deepEqual(reversal[0].entry_date, saleReceipt[0].entry_date);
+    assert.equal(
+      (await pool.query("SELECT status FROM inventory WHERE id=$1", [sellItem]))
+        .rows[0].status,
+      "available",
+    );
+    assert.equal(
+      Number(
+        (
+          await pool.query(
+            "SELECT coalesce(sum(amount),0) n FROM cash_sales WHERE inventory_id=$1 AND voided_at IS NULL",
+            [sellItem],
+          )
+        ).rows[0].n,
+      ),
+      0,
+    );
+    assert.ok(
+      body(await get(base + "&tab=sales&q=666666666666666")).includes(
+        "Bekor qilingan",
+      ),
+    );
+    const voidExport = await fetch(origin + "/api/export?branch=" + b1, {
+      headers: { cookie: viewerCookie },
+    });
+    assert.equal(voidExport.status, 200);
+    assert.ok(
+      Buffer.from(await voidExport.arrayBuffer()).includes(
+        Buffer.from("Synthetic mistaken sale"),
+      ),
+    );
+    const resale = await sell({ requestKey: randomUUID() });
+    assert.equal(resale.status, 200);
+    const resaleId = (await resale.json()).id;
+    assert.equal((await voidSale({ requestKey: saleVoidKey })).status, 200);
+    assert.equal((await voidSale()).status, 400);
+    assert.equal(
+      (await pool.query("SELECT status FROM inventory WHERE id=$1", [sellItem]))
+        .rows[0].status,
+      "sold",
+      "old cancellation replay must not free resold stock",
+    );
+    assert.deepEqual(
+      (
+        await Promise.all([
+          voidSale({ saleId: resaleId }),
+          voidSale({ saleId: resaleId }),
+        ])
+      )
+        .map((r) => r.status)
+        .sort(),
+      [200, 400],
+    );
+    assert.equal(
+      (await post("contracts", { ...terms, inventoryId: sellItem })).status,
+      200,
+      "corrected cash sale stock can be sold on installment",
+    );
+    assert.equal((await voidSale()).status, 400);
+    assert.equal(
+      (await pool.query("SELECT status FROM inventory WHERE id=$1", [sellItem]))
+        .rows[0].status,
+      "sold",
+    );
     const raceItemResponse = await post("inventory", {
       ...input,
       imei: "888888888888888",
@@ -1225,6 +1343,7 @@ test(
     const staff = (await created.json()).id;
     extraUsers.push(staff);
     const staffCookie = await login(staffEmail);
+    assert.equal((await voidSale({}, staffCookie)).status, 403);
     const staffSellItemResponse = await post(
       "inventory",
       { ...input, imei: "999999999999999" },

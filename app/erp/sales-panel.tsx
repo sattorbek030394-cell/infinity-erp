@@ -3,6 +3,7 @@ import { dateTime, methodNames, type HistoryFilters } from "../../lib/filters";
 import { cashMoney } from "../../lib/cash-domain";
 import { SaleForm } from "./sale-form";
 import { SearchForm } from "./search-form";
+import { SaleVoid } from "./sale-void";
 export function SalesPanel({
   report,
   branch,
@@ -36,7 +37,7 @@ export function SalesPanel({
       ) : null}
       <SearchForm branchId={branch} tab="sales" filters={filters} status="" />
       <p>
-        {report.count} ta savdo topildi. Tanlangan ro‘yxat tushumi:{" "}
+        {report.count} ta savdo topildi. Faol savdolar tushumi:{" "}
         <strong>{cashMoney(report.total, "cash_uzs")}</strong>. Bu sof foyda
         yoki Kassa qoldig‘i emas.
       </p>
@@ -60,10 +61,23 @@ export function SalesPanel({
                 <small>{s.imei}</small>
               </td>
               <td>{s.customer_label || "—"}</td>
-              <td>{cashMoney(s.amount, "cash_uzs")}</td>
+              <td>
+                {cashMoney(s.amount, "cash_uzs")}
+                {s.voided_at ? (
+                  <small>Bekor qilingan • hisobga kirmaydi</small>
+                ) : null}
+              </td>
               <td>{methodNames[s.method]}</td>
               <td>
                 <code>{s.id}</code>
+                {s.voided_at ? (
+                  <>
+                    <small>Sabab: {s.void_reason}</small>
+                    <small>{dateTime(s.voided_at)}</small>
+                  </>
+                ) : report.role === "admin" ? (
+                  <SaleVoid branchId={branch} saleId={s.id} />
+                ) : null}
               </td>
             </tr>
           ))}

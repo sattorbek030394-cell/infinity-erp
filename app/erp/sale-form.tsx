@@ -93,8 +93,9 @@ export function SaleForm({
         />
       </label>
       <p>
-        Summa to‘liq olingan bo‘lsin. Qurilma sotilgan deb belgilanadi. V1 da
-        savdoni bekor qilish va qaytarish hali yo‘q.
+        Summa to‘liq olingan bo‘lsin. Qurilma sotilgan deb belgilanadi. Xato
+        savdoni faqat administrator bekor qiladi. Haqiqiy qaytarish jarayoni
+        hali yo‘q.
       </p>
       <label>
         <input type="checkbox" required /> Qurilma va to‘liq tushumni

@@ -85,7 +85,7 @@ To‘liq HTTP testi uchun migratsiya qilingan **lokal test bazasi** bilan `INTEG
 
 Production: HTTPS, production DATABASE_URL, APP_ORIGIN ning aniq HTTPS manzili, migratsiyalar, alohida cheklangan DB foydalanuvchisi, backup/restore sinovi kerak. `npm run build` → `npm start`. Demo seedni real bazada ishlatmang.
 
-V1: login parolini tiklash, MFA, qaytarish/bekor qilish, filial transferi, kechikish taqsimoti va to‘liq buxgalteriya yo‘q. Nasiya jadvali bazada mavjud; to‘lovlarni aniq oylarga ajratish hali yo‘q. Production operatsion audit va Excel parity auditi bajarilmagan.
+V1: login parolini tiklash, MFA, haqiqiy qaytarish va shartnomani bekor qilish, filial transferi, kechikish taqsimoti va to‘liq buxgalteriya yo‘q. Nasiya jadvali bazada mavjud; to‘lovlarni aniq oylarga ajratish hali yo‘q. Production operatsion audit va Excel parity auditi bajarilmagan.
 
 Haqiqiy mijoz, passport, PNFL, haqiqiy to‘lov yoki maxfiy kalitlarni repositoryga kiritmang. Sun’iy seeddagi IMEI ham haqiqiy qurilma emas. Excel/CSV va env fayllari ignore qilingan; ignore qoidasi ma’lumot xavfsizligi tekshiruvi o‘rnini bosmaydi. Real ma’lumot importi V1 da mavjud emas.
 
@@ -139,10 +139,18 @@ Yangilaganda `npm run migrate` bajaring (`006_cash_sales.sql`). **Naqd savdo** b
 
 Savdo, qurilmaning “Sotilgan” holati va Kassa tushumi bitta tranzaksiyada saqlanadi. Tushumni yana qo‘lda yozmang. Qurilma blokirovkasi bir vaqtda ikki marta yoki ham naqd, ham nasiyaga sotilishini bloklaydi. Bir xil so‘rov kalitli qayta yuborish bir savdo va bir Kassa yozuvini yaratadi. Filial/tenant serverdan tekshiriladi; boshqa filial qurilmasini sotib bo‘lmaydi. Kuzatuvchi faqat tarixni ko‘radi.
 
-Tarix IMEI/model/mijoz belgisi/savdo ID, usul va Toshkent sanalari bo‘yicha qidiriladi, 20 tadan sahifalanadi. Ekrandagi tushum faqat filtrga mos savdolar jami; Dashboarddagi Naqd savdo tushumi barcha filial savdolari jami. Tushum Kassa qoldig‘i yoki sof foyda emas. Excelda alohida Naqd savdo varag‘i va Kassa daftarida savdo ID bor. Eksportdagi Naqd savdo ro‘yxati ham 10 000 yozuv bilan cheklangan; limitdan oshganda butun hisobot rad qilinadi.
+Tarix IMEI/model/mijoz belgisi/savdo ID, usul va Toshkent sanalari bo‘yicha qidiriladi, 20 tadan sahifalanadi. Ekrandagi tushum faqat filtrga mos faol savdolar jami; Dashboarddagi Naqd savdo tushumi tanlangan filialdagi barcha faol savdolar jami. Tushum Kassa qoldig‘i yoki sof foyda emas. Excelda alohida Naqd savdo varag‘i va Kassa daftarida savdo ID bor. Eksportdagi Naqd savdo ro‘yxati ham 10 000 yozuv bilan cheklangan; limitdan oshganda butun hisobot rad qilinadi.
 
-V1 da naqd savdoni bekor qilish, qurilmani qaytarish, chegirma/soliq modeli va savdo chekini chop etish yo‘q. Avtomatik savdo tushumini Kassa daftaridan alohida bekor qilish bloklangan; bu ombor va tushumni bir-biridan uzmaslik uchun. Dastlab sun’iy ma’lumotlarda sinang.
+V1 da haqiqiy qurilma/pul qaytarish, chegirma/soliq modeli va savdo chekini chop etish yo‘q. Avtomatik savdo tushumini Kassa daftaridan alohida bekor qilish bloklangan; bu ombor va tushumni bir-biridan uzmaslik uchun. Dastlab sun’iy ma’lumotlarda sinang.
 
 POST /api/sales — branchId, inventoryId, requestKey, amount (butun UZS), method (cash/card/transfer), customerLabel (ixtiyoriy). Sessiya, Origin va admin/cashier ruxsati talab qilinadi. 200 {id}, 400 validatsiya/sotilgan qurilma/takroriy kalit xatosi, 403 ruxsat xatosi. GET /erp?branch=<uuid>&tab=sales — savdo va tarix ekrani.
 
 POST /api/cash — branchId, requestKey, action (opening/entry/transfer), wallet, date, amount (matn), actionga tegishli direction/category/note yoki destination. Tenant serverdan olinadi; Origin va filial ruxsati tekshiriladi. Opening faqat administrator uchun. 200 {id}, 400 validatsiya yoki 403 ruxsat xatosi.
+
+### Xato naqd savdoni tuzatish
+
+Yangilaganda migratsiyalarni bajaring (007_sale_voids.sql). Administrator Naqd savdo tarixida **Savdoni bekor qilish**ni ochadi, sabab yozadi va qurilma omborda ekanini tasdiqlaydi. Asl savdo o‘chmaydi: bekor qilish vaqti, sabab va muallif saqlanadi. Qurilma omborga qaytadi, tushumga asl sanada shu hamyonda qarama-qarshi Kassa yozuvi qo‘shiladi. Barchasi bitta tranzaksiyada bajariladi. Dashboard va savdo tushumi faqat faol savdolarni hisoblaydi; Excel tarixida bekor qilingan savdo alohida belgilanadi.
+
+Bu tarixiy xatoni tuzatish; haqiqiy mijozga pul qaytarish jarayoni emas. Kassir va kuzatuvchi bekor qila olmaydi. To‘g‘ri savdoni yangi yozuv sifatida kiriting. Takroriy bosish bitta tuzatish yaratadi; bekor qilingan savdo qayta bekor qilinmaydi. Eski so‘rovni qayta yuborish qurilmaning keyingi savdosini o‘zgartirmaydi.
+
+POST /api/sales/void — branchId, saleId, requestKey, reason (5–160 belgi). Sessiya, Origin va filial administratorining ruxsati talab qilinadi. 200 {id}, 400 noto‘g‘ri so‘rov yoki bog‘lanish, 403 ruxsat xatosi.
