@@ -365,10 +365,21 @@ async function writeRecord(
     const { total, principal, markup, bp } = await nasiyaShartlari(c, s, v);
     // Minimal marja: nasiya ustamasi hisobga olinmaydi - qurilmaning
     // o'z narxi tannarxdan yetarlicha oshsin.
+    //
+    // Eski yo'lda (faqat `total` berilgan) ustama ajratilmaydi, ya'ni
+    // `principal + down` ustamani ham o'z ichiga oladi. Shunda marja
+    // ustama hisobiga katta ko'rinib, chegara ishlamay qolardi -
+    // shuning uchun chegara yoqilgan bo'lsa qurilma narxi talab
+    // qilinadi.
+    const marjaBp = await minMarja(c, s);
+    if (marjaBp > 0 && v.priceUzs === undefined)
+      throw new Error(
+        "Minimal marja chegarasi yoqilgan: qurilma narxini kiriting",
+      );
     const narxSabab = narxTekshir({
       narx: principal + v.downPayment,
       tannarx: Number(item.rows[0].cost),
-      bp: await minMarja(c, s),
+      bp: marjaBp,
       reason: v.priceOverrideReason,
       canOverride: can(s.role, "limit.override"),
     });

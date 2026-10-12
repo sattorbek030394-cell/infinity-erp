@@ -77,7 +77,9 @@ export async function voidPayment(raw: unknown) {
     ).rows[0];
     if (!receipt)
       throw new PaymentVoidError(
-        "Eski to‘lovning Kassa yozuvi yo‘q. Bu usul bilan bekor qilib bo‘lmaydi",
+        payment.method === "advance"
+          ? "Avansdan ko‘chirilgan to‘lov bu usul bilan bekor qilinmaydi: kassada yozuvi yo‘q. Teskari ko‘chirish kiriting"
+          : "Eski to‘lovning Kassa yozuvi yo‘q. Bu usul bilan bekor qilib bo‘lmaydi",
       );
     if (
       Number(receipt.amount_minor) !== tushumMinor(payment) ||

@@ -4247,10 +4247,66 @@ test(
     assert.ok(html.includes("SYNTHETIC BONUS sotuvchi"));
     assert.ok(html.includes("Bonus"), "bonus ustuni ko‘rinsin");
     assert.ok(html.includes("9 000"), "bonus hisoblansin");
+    // Nasiyada ham ishlaydi: 1 000 000 tannarxli qurilma 1 100 000 ga
+    // sotilsa marja 100 000 - chegaradan past.
+    const nasiyaPast = await post(
+      "contracts",
+      {
+        inventoryId: await qurilma("777777777777775"),
+        customerName: "SYNTHETIC NARX mijoz",
+        priceUzs: 1_100_000,
+        downPayment: 100_000,
+        months: 3,
+        monthlyRateBp: 500,
+        startDate: "2026-10-01",
+      },
+      b1,
+      auth,
+    );
+    assert.equal(nasiyaPast.status, 400, "nasiyada ham chegara ishlaydi");
+    // Eski yo'l: faqat `total` berilsa ustama ajratilmaydi, ya'ni marjani
+    // to'g'ri o'lchab bo'lmaydi. Chegara yoqilgan bo'lsa rad etiladi.
+    const eskiYol = await post(
+      "contracts",
+      {
+        inventoryId: await qurilma("777777777777776"),
+        customerName: "SYNTHETIC NARX mijoz",
+        total: 2_000_000,
+        downPayment: 100_000,
+        months: 3,
+        startDate: "2026-10-01",
+      },
+      b1,
+      auth,
+    );
+    assert.equal(
+      eskiYol.status,
+      400,
+      "chegara yoqilganda qurilma narxi talab qilinadi",
+    );
     // Chegarani qaytarib o'chiramiz.
     await pool.query(
       "UPDATE nasiya_settings SET min_margin_bp=0, seller_bonus_bp=0 WHERE branch_id=$1",
       [b1],
+    );
+    // O'chirilgandan keyin eski yo'l yana ishlaydi.
+    assert.equal(
+      (
+        await post(
+          "contracts",
+          {
+            inventoryId: await qurilma("777777777777777"),
+            customerName: "SYNTHETIC NARX mijoz",
+            total: 2_000_000,
+            downPayment: 100_000,
+            months: 3,
+            startDate: "2026-10-01",
+          },
+          b1,
+          auth,
+        )
+      ).status,
+      200,
     );
   },
 );
