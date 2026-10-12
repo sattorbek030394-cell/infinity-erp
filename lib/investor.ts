@@ -189,6 +189,8 @@ export async function oylikTaklif(branchId: string, oy: string) {
     bp,
     netCents,
     investorCents: Math.round((netCents * bp) / 10000),
+    // Oy yopilganda muzlatiladigan hisobot qatori.
+    joriy: hisobot.joriy,
   };
 }
 
@@ -332,6 +334,20 @@ export async function writeInvestor(raw: unknown) {
         .map((r) => ({ investorId: r.investor_id, kunlar: Number(r.kunlar) }))
         .filter((r) => r.kunlar > 0);
       const ulush = taqsimla(profit, kunlar);
+      // Oyning foyda hisoboti ham muzlatiladi: keyingi tuzatishlar
+      // o'tgan oyning raqamini o'zgartirmasin.
+      await c.query(
+        `INSERT INTO profit_snapshots(tenant_id,branch_id,month,data,kurs,created_by)
+ VALUES($1,$2,$3::date,$4,$5,$6) ON CONFLICT DO NOTHING`,
+        [
+          s.tenant_id,
+          s.branch_id,
+          dan,
+          JSON.stringify(taklif.joriy),
+          taklif.kurs,
+          s.userId,
+        ],
+      );
       await c.query(
         `INSERT INTO investor_months(tenant_id,branch_id,month,rule,profit_cents,rate,
  net_cents,share_bp,override_reason,closed_by)

@@ -170,9 +170,19 @@ export async function readProfitDetail(
       usd: x.wallet === "cash_usd",
     }));
   }
+  // Muzlatilgan oyda tafsilot hozirgi yozuvlardan hisoblanadi, hisobot
+  // esa yopilgan paytdagi raqamni ko'rsatadi - ikkisi farq qilishi
+  // mumkin va buni aytib qo'yish kerak.
+  const muzlatilgan = !!(
+    await db.query(
+      "SELECT 1 FROM profit_snapshots WHERE tenant_id=$1 AND branch_id=$2 AND month=$3::date",
+      args,
+    )
+  ).rowCount;
   return {
     oy,
     kind,
+    muzlatilgan,
     nomi: TAFSIL_NOMI[kind],
     rows,
     // Valyutalar jim qo'shilmaydi: so'm va dollar alohida yig'iladi.

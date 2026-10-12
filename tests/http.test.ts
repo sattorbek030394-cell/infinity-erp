@@ -114,6 +114,7 @@ after(async () => {
     // Tartib muhim: bola jadval ota jadvaldan oldin o'chadi.
     for (const table of [
       "audit_events",
+      "profit_snapshots",
       "investor_shares",
       "investor_months",
       "investor_entries",
@@ -3864,6 +3865,26 @@ test(
     assert.equal(Number(muzlatilgan.rate), 12_000);
     assert.equal(Number(muzlatilgan.share_bp), 8000);
     assert.ok(muzlatilgan.override_reason.includes("qo‘lda tekshirildi"));
+    // Oy yopilganda foyda hisoboti ham muzlatiladi: keyingi tuzatishlar
+    // o'tgan oyning raqamini o'zgartirmaydi.
+    const snapshot = (
+      await pool.query(
+        "SELECT data,kurs FROM profit_snapshots WHERE branch_id=$1 AND month='2026-06-01'",
+        [b1],
+      )
+    ).rows[0];
+    assert.ok(snapshot, "yopilgan oyning hisoboti saqlanadi");
+    assert.equal(snapshot.data.oy, "2026-06");
+    assert.ok(
+      typeof snapshot.data.sofFoyda === "number",
+      "snapshot ichida sof foyda bor",
+    );
+    const iyun = await (
+      await fetch(origin + "/erp?branch=" + b1 + "&tab=profit&oy=2026-06", {
+        headers: { cookie: auth },
+      })
+    ).text();
+    assert.ok(iyun.includes("muzlatilgan"), "hisobotda muzlatilgani aytilsin");
     const ulush = (
       await pool.query(
         `SELECT i.name,s.capital_days,s.cents FROM investor_shares s

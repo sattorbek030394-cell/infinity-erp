@@ -54,6 +54,8 @@ export type OylikFoyda = {
   taqsimotUzs: number;
   taqsimotUsd: number;
   sofFoyda: number;
+  /** Oy yopilgan - raqamlar o'sha paytda muzlatilgan. */
+  muzlatilgan?: boolean;
 };
 
 export const CHIQIM_EMAS = [
@@ -188,8 +190,20 @@ export async function readProfit(branchId: string, oyRaw: string, oylar = 6) {
     ).rows[0]?.rate ?? 0,
   );
 
+  // Muzlatilgan oylar: yopilganda saqlangan hisobot qatori. Bor bo'lsa
+  // hisoblangan qator emas, o'sha o'qiladi.
+  const snapshots = (
+    await db.query(
+      `SELECT to_char(month,'YYYY-MM') oy, data FROM profit_snapshots
+ WHERE tenant_id=$1 AND branch_id=$2 AND month>=$3::date AND month<=$4::date`,
+      [...args, dan, boshi(oy)],
+    )
+  ).rows as { oy: string; data: OylikFoyda }[];
+
   const topil = (rows: any[], o: string) => rows.find((r) => r.oy === o);
-  const jadval: OylikFoyda[] = oyna.map((o) => {
+  const jadval: OylikFoyda[] = oyna.map((o): OylikFoyda => {
+    const muzlatilgan = snapshots.find((x) => x.oy === o);
+    if (muzlatilgan) return { ...muzlatilgan.data, oy: o, muzlatilgan: true };
     const n = topil(nasiya, o),
       q2 = topil(naqd, o),
       z = topil(qarz, o),

@@ -82,6 +82,12 @@ export function ProfitPanel({
   return (
     <>
       <h1>Foyda — {oyNomi(report.oy)}</h1>
+      {j.muzlatilgan ? (
+        <aside className="notice">
+          Bu oy yopilgan: raqamlar yopilgan paytda muzlatilgan va keyingi
+          tuzatishlar ularni o‘zgartirmaydi. Tuzatish joriy oyda ko‘rinadi.
+        </aside>
+      ) : null}
       <nav className="branchbar">
         {report.oylar.map((o) => (
           <a
@@ -231,6 +237,7 @@ export function ProfitPanel({
                 <a href={"/erp?branch=" + branch + "&tab=profit&oy=" + o.oy}>
                   {oyNomi(o.oy)}
                 </a>
+                {o.muzlatilgan ? <small>muzlatilgan</small> : null}
               </td>
               <td>
                 {o.nasiyaSoni + o.naqdSoni + o.qarzSoni}

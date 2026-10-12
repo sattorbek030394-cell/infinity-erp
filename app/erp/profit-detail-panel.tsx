@@ -27,6 +27,15 @@ export function ProfitDetailPanel({
           ← Foyda hisobotiga qaytish
         </a>
       </nav>
+      {data.muzlatilgan ? (
+        <aside className="notice">
+          Bu oy yopilgan va hisobotdagi son muzlatilgan. Pastdagi tafsilot
+          esa hozirgi yozuvlardan hisoblanadi, shuning uchun oy yopilgandan
+          keyin tuzatish kiritilgan bo‘lsa yig‘indi muzlatilgan sondan farq
+          qilishi mumkin — bu xato emas, aynan shu farq tuzatish bo‘lganini
+          ko‘rsatadi.
+        </aside>
+      ) : null}
       {data.rows.length ? (
         <>
           <table>
