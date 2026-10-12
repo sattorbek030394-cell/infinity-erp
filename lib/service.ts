@@ -3,6 +3,7 @@ import { scope } from "./auth";
 import { transaction, db } from "./db";
 import {
   itemSchema,
+  aralashQismlar,
   contractSchema,
   paymentSchema,
   schedule,
@@ -47,6 +48,23 @@ export async function createRecord(
   return transaction((c) => writeRecord(c, s, kind, input));
 }
 type Shartnoma = z.infer<typeof contractSchema>;
+// Mijoz kartochkasi va limit tekshiruvi nasiya ham, qarzga sotish ham
+// uchun bir xil: faqat mijoz maydonlari kerak.
+type MijozMaydonlari = Pick<
+  Shartnoma,
+  | "customerName"
+  | "pnfl"
+  | "passport"
+  | "passportIssuer"
+  | "passportDate"
+  | "birthDate"
+  | "phone1"
+  | "phone2"
+  | "address"
+  | "icloudAccount"
+  | "icloudPhone"
+  | "limitOverrideReason"
+>;
 
 /** Minimal marja chegarasi, bazis punktda. Nol - cheklov yo'q. */
 async function minMarja(c: Pick<PoolClient, "query">, s: Scope) {
@@ -130,7 +148,11 @@ async function nasiyaShartlari(
  * kartochka ochilmaydi - borini to'ldiradi. Bo'sh kelgan maydon eski
  * qiymatni o'chirib tashlamaydi.
  */
-async function mijozYoz(c: Pick<PoolClient, "query">, s: Scope, v: Shartnoma) {
+async function mijozYoz(
+  c: Pick<PoolClient, "query">,
+  s: Scope,
+  v: MijozMaydonlari,
+) {
   const r = await c.query(
     `INSERT INTO customers(id,tenant_id,full_name,passport,pnfl,passport_issuer,passport_date,
  birth_date,phone1,phone2,address,icloud_account,icloud_phone)
@@ -184,7 +206,7 @@ async function limitTekshir(
   s: Scope,
   customerId: string,
   yangiQarz: number,
-  v: Shartnoma,
+  v: MijozMaydonlari,
 ) {
   const mijoz = (
     await c.query(
@@ -248,50 +270,51 @@ async function writeRecord(
   const id = randomUUID();
   if (kind === "inventory") {
     const v = itemSchema.parse(input);
-    // Tannarx dollarda kelsa kirim kursi bilan so'mga aylantiriladi;
-    // ikkisi ham saqlanadi, chunki foyda hisobi kirim kursiga tayanadi.
-    const usdCents =
-      v.costUsd === undefined ? null : minorUnits(v.costUsd, "cash_usd");
-    const cost =
-      usdCents === null ? v.cost! : Math.round((usdCents * v.costRate!) / 100);
+    // Tannarx dollarda kiritiladi, so'mdagi qiymatni dastur kirim kursi
+    // bilan o'zi hisoblaydi. Ikkisi ham saqlanadi: foyda hisobi kirim
+    // kursiga tayanadi. Prognoz sotuv narxi ham shu kurs bilan so'mga.
+    const usdCents = sentga(v.costUsd!);
+    const rate = v.costRate!;
+    const cost = Math.round((usdCents * rate) / 100);
+    const expectedCents = sentga(v.expectedPriceUsd!);
+    const expectedPrice = Math.round((expectedCents * rate) / 100);
     if (!Number.isSafeInteger(cost) || cost < 1)
       throw new Error("Tannarx noto‘g‘ri");
-    const supplierId = v.supplier ? await yetkazibBeruvchi(c, s, v.supplier) : null;
+    const supplierId = await yetkazibBeruvchi(c, s, v.supplier);
     await c.query(
       `INSERT INTO inventory(id,tenant_id,branch_id,imei,imei2,brand,model,memory,sim_type,
  color,region,condition,battery,purchase_date,cost,cost_usd_cents,cost_rate,
- expected_price,supplier_id,received_by,purchase_method,investor_id)
- VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17,$18,$19,$20,$21,$22)`,
+ expected_price,expected_price_usd_cents,supplier_id,received_by,purchase_method,investor_id)
+ VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17,$18,$19,$20,$21,$22,$23)`,
       [
         id,
         s.tenant_id,
         s.branch_id,
-        v.imei,
+        v.imei!,
         v.imei2 ?? "",
         v.brand,
         v.model,
         v.memory,
-        v.simType,
+        v.simType!,
         v.color,
         v.region,
-        v.condition,
-        v.battery === undefined ? "" : String(v.battery),
-        v.purchaseDate ?? null,
+        v.condition!,
+        v.condition === "B/U" ? String(v.battery) : "",
+        v.purchaseDate!,
         cost,
         usdCents,
-        usdCents === null ? null : v.costRate,
-        v.expectedPrice ?? null,
+        rate,
+        expectedPrice > 0 ? expectedPrice : null,
+        expectedCents,
         supplierId,
         v.receivedBy,
-        v.purchaseMethod ?? "",
+        v.purchaseMethod!,
         v.investorId ?? null,
       ],
     );
     // TZ INV-02: to'lov turiga qarab kassadan chiqim yoki yetkazib
     // beruvchi majburiyati. Investor tovari ikkisini ham yaratmaydi.
     if (v.purchaseMethod === "debt") {
-      if (!supplierId)
-        throw new Error("Qarzga olingan tovarda yetkazib beruvchi majburiy");
       await c.query(
         `INSERT INTO supplier_obligations(id,tenant_id,branch_id,supplier_id,inventory_id,amount,usd_cents,rate,created_by)
  VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9)`,
@@ -303,11 +326,23 @@ async function writeRecord(
           id,
           cost,
           usdCents,
-          usdCents === null ? null : v.costRate,
+          rate,
           s.userId,
         ],
       );
-    } else if (v.purchaseMethod && v.purchaseMethod !== "investor") {
+    } else if (v.purchaseMethod === "mixed") {
+      // Aralash to'lov: har hamyondan o'z summasi chiqadi (USD dan sent,
+      // so'm hamyonlaridan so'm). Jami tannarxga teng ekani tekshiriladi.
+      const qismlar = aralashQismlar({
+        cost,
+        rate,
+        usdCents: v.mixUsd === undefined ? 0 : sentga(v.mixUsd),
+        naqdSom: v.mixCash ?? 0,
+        karta: v.mixCard ?? 0,
+        bank: v.mixBank ?? 0,
+      });
+      for (const q of qismlar) await postPurchase(c, s, id, q.minor, q.hamyon);
+    } else if (v.purchaseMethod !== "investor") {
       const hamyon =
         v.purchaseMethod === "cash_usd"
           ? "cash_usd"
@@ -316,17 +351,15 @@ async function writeRecord(
             : v.purchaseMethod === "bank"
               ? "bank_uzs"
               : "cash_uzs";
-      if (hamyon === "cash_usd" && usdCents === null)
-        throw new Error("Naqd USD xaridida tannarx dollarda bo‘lishi kerak");
       // USD hamyonidan sent chiqadi, so'm hamyonidan so'm.
       await postPurchase(
         c,
         s,
         id,
-        hamyon === "cash_usd" ? usdCents! : cost,
+        hamyon === "cash_usd" ? usdCents : cost,
         hamyon,
       );
-    } else if (v.purchaseMethod === "investor") {
+    } else {
       // Investor tovari: kassada harakat yo'q, yetkazib beruvchi qarzi
       // ham yo'q - tovarning tannarxi investorning kapitaliga yoziladi.
       // Sana omborga kirgan kun: kapital-kun shu kundan boshlanadi.
@@ -677,5 +710,33 @@ export async function readBranch(branchId: string) {
         args,
       )
     ).rows[0].total,
+  };
+}
+
+/**
+ * Kirim formasidagi tanlov ro'yxatlari: yetkazib beruvchilar va qabul
+ * qiluvchilar. Qabul qiluvchi - ilgari kirim qabul qilgan yoki sotgan
+ * xodim ismlari va shu filialning faol xodimlari (email).
+ */
+export async function kirimRoyxatlari(branchId: string) {
+  const s = await scope(branchId);
+  const [taminotchilar, qabul] = await Promise.all([
+    db.query(`SELECT name FROM suppliers WHERE tenant_id=$1 ORDER BY name`, [
+      s.tenant_id,
+    ]),
+    db.query(
+      `SELECT DISTINCT nom FROM (
+   SELECT btrim(received_by) nom FROM inventory WHERE tenant_id=$1 AND branch_id=$2
+   UNION SELECT btrim(seller) FROM contracts WHERE tenant_id=$1 AND branch_id=$2
+   UNION SELECT btrim(seller) FROM cash_sales WHERE tenant_id=$1 AND branch_id=$2
+   UNION SELECT u.email FROM memberships m JOIN users u ON u.id=m.user_id
+    WHERE m.tenant_id=$1 AND m.branch_id=$2 AND m.role<>'disabled'
+ ) x WHERE nom<>'' ORDER BY nom`,
+      [s.tenant_id, s.branch_id],
+    ),
+  ]);
+  return {
+    taminotchilar: taminotchilar.rows.map((r) => r.name as string),
+    qabulQiluvchilar: qabul.rows.map((r) => r.nom as string),
   };
 }

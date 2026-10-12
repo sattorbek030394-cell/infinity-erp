@@ -8,6 +8,8 @@ import {
   rollarAmal,
   ROLLAR,
   itemSchema,
+  aralashQismlar,
+  sentga,
   contractSchema,
   paymentSchema,
 } from "../lib/domain";
@@ -122,5 +124,97 @@ test("input validation rejects malformed identifiers and money", () => {
       startDate: "2026-01-01",
     }).success,
     false,
+  );
+});
+
+// Ombor kirimi: majburiy maydonlar, holat/batareyka, SIM turi, aralash to'lov.
+const toliqKirim = {
+  model: "iPhone 15",
+  imei: "356789012345678",
+  condition: "Yangi",
+  purchaseDate: "2026-10-12",
+  costUsd: "1000",
+  costRate: "12000",
+  expectedPriceUsd: "1100",
+  simType: "Dual",
+  supplier: "Ali",
+  receivedBy: "Jamoliddin",
+  purchaseMethod: "cash_uzs",
+};
+const xato = (v: unknown) => {
+  const r = itemSchema.safeParse(v);
+  return r.success ? "" : r.error.issues.map((i) => i.message).join(" | ");
+};
+test("kirim: to'liq to'ldirilgan forma o'tadi", () => {
+  assert.equal(xato(toliqKirim), "");
+});
+test("kirim: bo'sh forma barcha majburiy maydonlarni bir xabarda aytadi", () => {
+  const m = xato({});
+  for (const nom of [
+    "Model",
+    "IMEI yoki seriya raqami",
+    "Qurilma holati",
+    "Kirim sanasi",
+    "Tannarx USD",
+    "Kirim kursi",
+    "Prognoz sotuv narxi USD",
+    "SIM turi",
+    "Yetkazib beruvchi",
+    "Qabul qiluvchi",
+    "To‘lov turi",
+  ])
+    assert.ok(m.includes(nom), nom + " xabarda yo'q: " + m);
+});
+test("kirim: Trade-in va ro'yxatda yo'q SIM turi rad etiladi", () => {
+  assert.notEqual(xato({ ...toliqKirim, condition: "Trade-in" }), "");
+  assert.notEqual(xato({ ...toliqKirim, simType: "Nano" }), "");
+  assert.equal(xato({ ...toliqKirim, simType: "Esim+esim" }), "");
+});
+test("kirim: Yangi qurilmada batareyka yozilmaydi, B/U da majburiy", () => {
+  assert.match(xato({ ...toliqKirim, battery: "90" }), /Yangi qurilmada/);
+  assert.match(xato({ ...toliqKirim, condition: "B/U" }), /Batareyka/);
+  assert.equal(xato({ ...toliqKirim, condition: "B/U", battery: "87" }), "");
+});
+test("kirim: aralash to'lov jami tannarxga teng bo'lishi kerak", () => {
+  // 1000$ x 12 000 = 12 mln: 500$ naqd + 2 mln naqd + 4 mln karta.
+  assert.equal(sentga("850.5"), 85_050);
+  assert.deepEqual(
+    aralashQismlar({
+      cost: 12_000_000,
+      rate: 12_000,
+      usdCents: 50_000,
+      naqdSom: 2_000_000,
+      karta: 4_000_000,
+      bank: 0,
+    }),
+    [
+      { hamyon: "cash_usd", minor: 50_000 },
+      { hamyon: "cash_uzs", minor: 2_000_000 },
+      { hamyon: "card_uzs", minor: 4_000_000 },
+    ],
+  );
+  assert.throws(
+    () =>
+      aralashQismlar({
+        cost: 12_000_000,
+        rate: 12_000,
+        usdCents: 50_000,
+        naqdSom: 2_000_000,
+        karta: 3_000_000,
+        bank: 0,
+      }),
+    /teng bo‘lishi kerak/,
+  );
+  assert.throws(
+    () =>
+      aralashQismlar({
+        cost: 1_000,
+        rate: 1,
+        usdCents: 0,
+        naqdSom: 1_000,
+        karta: 0,
+        bank: 0,
+      }),
+    /kamida ikki/,
   );
 });

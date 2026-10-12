@@ -33,52 +33,142 @@ export const TOLOV_TURLARI = [
   "bank",
   "debt",
   "investor",
+  "mixed",
 ] as const;
+
+/** Kirimdagi qurilma holati. "Trade-in" olib tashlangan. */
+export const QURILMA_HOLATLARI = ["Yangi", "B/U"] as const;
+
+/** Kirimdagi SIM turi - faqat shu ro'yxatdan tanlanadi. */
+export const SIM_TURLARI = [
+  "Esim",
+  "Esim+esim",
+  "1 sim",
+  "Sim+esim",
+  "Dual",
+  "Wi-fi",
+  "Yo‘q",
+] as const;
+
+// Dollar summasi matn ko'rinishida: "850" yoki "850.50".
+const dollar = z
+  .string()
+  .trim()
+  .regex(/^\d{1,9}(\.\d{1,2})?$/, "Dollar summasi noto‘g‘ri");
+const somButun = z.coerce.number().int().min(0).max(1_000_000_000_000);
+
+/**
+ * Aralash to'lov: bitta kirim uchun bir nechta hamyondan chiqim.
+ * Jami (USD qismi kirim kursida so'mga aylantirilib) tannarxga teng
+ * bo'lishi shart - aks holda kassa va tannarx bir-biridan uzilib qoladi.
+ * USD qismini so'mga aylantirishdagi yaxlitlash uchun 1 so'm farqqa yo'l
+ * qo'yiladi.
+ */
+export function aralashQismlar(v: {
+  cost: number;
+  rate: number;
+  usdCents: number;
+  naqdSom: number;
+  karta: number;
+  bank: number;
+}) {
+  const qismlar = [
+    { hamyon: "cash_usd", minor: v.usdCents },
+    { hamyon: "cash_uzs", minor: v.naqdSom },
+    { hamyon: "card_uzs", minor: v.karta },
+    { hamyon: "bank_uzs", minor: v.bank },
+  ].filter((q) => q.minor > 0) as {
+    hamyon: "cash_usd" | "cash_uzs" | "card_uzs" | "bank_uzs";
+    minor: number;
+  }[];
+  if (qismlar.length < 2)
+    throw new Error("Aralash to‘lovda kamida ikki xil hamyon summasini yozing");
+  const jami =
+    Math.round((v.usdCents * v.rate) / 100) + v.naqdSom + v.karta + v.bank;
+  if (Math.abs(jami - v.cost) > 1)
+    throw new Error(
+      `Aralash to‘lov jami ${jami.toLocaleString("ru-RU")} so‘m, tannarx esa ${v.cost.toLocaleString("ru-RU")} so‘m — teng bo‘lishi kerak`,
+    );
+  return qismlar;
+}
 
 export const itemSchema = z
   .object({
-    imei: imeiMatn,
+    imei: ixtiyoriy(imeiMatn),
     imei2: ixtiyoriy(imeiMatn),
     brand: matn(40),
-    model: z.string().trim().min(1).max(100),
+    model: matn(100),
     memory: matn(20),
-    simType: matn(20),
+    simType: ixtiyoriy(z.enum(SIM_TURLARI, { error: "«SIM turi» ro‘yxatdan tanlansin" })),
     color: matn(30),
     region: matn(20),
-    condition: matn(20),
-    // Batareyka holati foizda: 0-100.
-    battery: ixtiyoriy(z.coerce.number().int().min(0).max(100)),
-    purchaseDate: ixtiyoriy(z.iso.date()),
-    // Tannarx: so'mda yoki dollarda kurs bilan.
-    cost: ixtiyoriy(money),
-    costUsd: ixtiyoriy(z.string().regex(/^\d{1,9}(\.\d{1,2})?$/)),
-    costRate: ixtiyoriy(z.coerce.number().int().min(1).max(100_000_000)),
-    expectedPrice: ixtiyoriy(money),
+    condition: ixtiyoriy(z.enum(QURILMA_HOLATLARI, { error: "«Qurilma holati» ro‘yxatdan tanlansin" })),
+    // Batareyka holati foizda: B/U uchun majburiy, Yangi uchun yozilmaydi.
+    battery: ixtiyoriy(
+      z.coerce
+        .number()
+        .int("Batareyka % butun son bo‘lsin")
+        .min(1, "Batareyka % 1–100 oralig‘ida")
+        .max(100, "Batareyka % 1–100 oralig‘ida"),
+    ),
+    purchaseDate: ixtiyoriy(z.iso.date("Kirim sanasi noto‘g‘ri")),
+    costUsd: ixtiyoriy(dollar),
+    costRate: ixtiyoriy(
+      z.coerce.number().int().min(1).max(100_000_000, "Kurs noto‘g‘ri"),
+    ),
+    expectedPriceUsd: ixtiyoriy(dollar),
     supplier: matn(120),
     receivedBy: matn(80),
-    purchaseMethod: ixtiyoriy(z.enum(TOLOV_TURLARI)),
+    purchaseMethod: ixtiyoriy(z.enum(TOLOV_TURLARI, { error: "«To‘lov turi» ro‘yxatdan tanlansin" })),
     // "Investor tovari" bo'lsa qaysi investorning kapitali ekani.
     investorId: ixtiyoriy(z.uuid()),
+    // Aralash to'lov qismlari: dollar naqd, so'm naqd, karta, hisob raqam.
+    mixUsd: ixtiyoriy(dollar),
+    mixCash: ixtiyoriy(somButun),
+    mixCard: ixtiyoriy(somButun),
+    mixBank: ixtiyoriy(somButun),
   })
-  .refine(
-    (v) =>
-      v.cost !== undefined ||
-      (v.costUsd !== undefined && v.costRate !== undefined),
-    { message: "Tannarxni so‘mda yoki dollar va kurs bilan yozing" },
-  )
-  // Investor kapitali dollarda yuritiladi, shuning uchun investor
-  // tovarida investor ham, dollardagi tannarx ham majburiy.
-  .refine(
-    (v) =>
-      (v.purchaseMethod === "investor") === (v.investorId !== undefined),
-    { message: "Investor tovarida investorni tanlang" },
-  )
-  .refine(
-    (v) =>
-      v.purchaseMethod !== "investor" ||
-      (v.costUsd !== undefined && v.costRate !== undefined),
-    { message: "Investor tovarida tannarx dollarda bo‘lishi kerak" },
-  );
+  .superRefine((v, ctx) => {
+    // Majburiy maydonlar: bittasi ham bo'sh qolsa saqlanmaydi va qaysi
+    // maydon to'ldirilmagani aniq aytiladi.
+    const bosh: string[] = [];
+    if (!v.model) bosh.push("Model");
+    if (v.imei === undefined) bosh.push("IMEI yoki seriya raqami");
+    if (v.condition === undefined) bosh.push("Qurilma holati");
+    if (v.purchaseDate === undefined) bosh.push("Kirim sanasi");
+    if (v.costUsd === undefined) bosh.push("Tannarx USD");
+    if (v.costRate === undefined) bosh.push("Kirim kursi");
+    if (v.expectedPriceUsd === undefined) bosh.push("Prognoz sotuv narxi USD");
+    if (v.simType === undefined) bosh.push("SIM turi");
+    if (!v.supplier) bosh.push("Yetkazib beruvchi");
+    if (!v.receivedBy) bosh.push("Qabul qiluvchi");
+    if (v.purchaseMethod === undefined) bosh.push("To‘lov turi");
+    if (v.condition === "B/U" && v.battery === undefined)
+      bosh.push("Batareyka % (B/U uchun)");
+    if (bosh.length)
+      ctx.addIssue({
+        code: "custom",
+        message: "To‘ldirilmagan majburiy maydonlar: " + bosh.join(", "),
+      });
+    if (v.condition === "Yangi" && v.battery !== undefined)
+      ctx.addIssue({
+        code: "custom",
+        message: "Yangi qurilmada Batareyka % yozilmaydi",
+      });
+    if (v.costUsd !== undefined && sentga(v.costUsd) < 1)
+      ctx.addIssue({ code: "custom", message: "Tannarx USD noldan katta bo‘lsin" });
+    if (v.expectedPriceUsd !== undefined && sentga(v.expectedPriceUsd) < 1)
+      ctx.addIssue({
+        code: "custom",
+        message: "Prognoz sotuv narxi noldan katta bo‘lsin",
+      });
+    // Investor kapitali dollarda yuritiladi: investorni tanlash shart.
+    if ((v.purchaseMethod === "investor") !== (v.investorId !== undefined))
+      ctx.addIssue({
+        code: "custom",
+        message: "Investor tovarida investorni tanlang",
+      });
+  });
 /**
  * Mijoz kartochkasi - nasiya va qarzga sotishda bir xil to'ldiriladi.
  * Ism berilsa mijoz `customers` ga yoziladi; PNFL berilsa, shu PNFL

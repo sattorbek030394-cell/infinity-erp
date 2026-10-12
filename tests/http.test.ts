@@ -32,6 +32,31 @@ async function login(email: string) {
   assert.equal(r.status, 303);
   return r.headers.get("set-cookie")!.split(";")[0];
 }
+/**
+ * Kirimda endi ko'p maydon majburiy (030 migratsiya). Eski testlar faqat
+ * IMEI, model va so'mdagi tannarxni yuboradi - ularni to'liq kirimga
+ * to'ldiramiz: so'mdagi tannarx 1 kurs bilan dollar sifatida, to'lov turi
+ * sukut bo'yicha "qarzga" (kassaga ta'sir qilmaydi).
+ */
+function kirim(data: unknown) {
+  if (!data || typeof data !== "object") return data;
+  const d: Record<string, unknown> = { ...(data as Record<string, unknown>) };
+  if (d.cost !== undefined && d.costUsd === undefined) {
+    d.costUsd = String(d.cost);
+    d.costRate = 1;
+  }
+  delete d.cost;
+  return {
+    condition: "Yangi",
+    purchaseDate: "2026-01-01",
+    simType: "Dual",
+    expectedPriceUsd: d.costUsd,
+    supplier: "SYNTHETIC kirim",
+    receivedBy: "SYNTHETIC qabul",
+    purchaseMethod: "debt",
+    ...d,
+  };
+}
 async function post(
   kind: string,
   data: unknown,
@@ -39,6 +64,7 @@ async function post(
   auth = cookie,
   source = origin,
 ) {
+  if (kind === "inventory") data = kirim(data);
   return fetch(origin + "/api/records", {
     method: "POST",
     headers: {

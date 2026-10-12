@@ -278,8 +278,21 @@ test("yopish hisobi noto'g'ri ma'lumotni rad etadi", () => {
     assert.throws(() => yopishHisobi(v), JSON.stringify(v));
 });
 
+// To'liq kirim: 030 migratsiyadan keyin bu maydonlar majburiy.
+const toliqKirim = {
+  model: "Iphone 17 Pro",
+  condition: "Yangi",
+  purchaseDate: "2026-10-11",
+  costUsd: "850",
+  costRate: "12800",
+  expectedPriceUsd: "950",
+  simType: "Sim+esim",
+  supplier: "Bahodir aka",
+  receivedBy: "Jamoliddin",
+  purchaseMethod: "cash_usd",
+};
+
 test("Kirim: IMEI o'rniga seriya raqami ham qabul qilinadi", () => {
-  const asos = { model: "Iphone 17 Pro", cost: 10_000_000 };
   for (const imei of [
     "353840106026083",
     "J4RMVWVXVV",
@@ -287,64 +300,64 @@ test("Kirim: IMEI o'rniga seriya raqami ham qabul qilinadi", () => {
     "353840106026083/1",
   ])
     assert.equal(
-      itemSchema.safeParse({ ...asos, imei }).success,
+      itemSchema.safeParse({ ...toliqKirim, imei }).success,
       true,
       imei,
     );
   for (const imei of ["123", "", "a b c d e", "x".repeat(33), "-abcde"])
     assert.equal(
-      itemSchema.safeParse({ ...asos, imei }).success,
+      itemSchema.safeParse({ ...toliqKirim, imei }).success,
       false,
       JSON.stringify(imei),
     );
 });
 
-test("Kirim: tannarx so'mda yoki dollar va kurs bilan", () => {
-  const asos = { imei: "353840106026083", model: "Iphone 17 Pro" };
-  assert.equal(itemSchema.safeParse(asos).success, false, "tannarx yo'q");
-  assert.equal(
-    itemSchema.safeParse({ ...asos, costUsd: "850" }).success,
-    false,
-    "kurs yo'q",
-  );
+test("Kirim: tannarx dollar va kurs bilan, majburiy maydonlar", () => {
+  const asos = { ...toliqKirim, imei: "353840106026083" };
+  assert.equal(itemSchema.safeParse(asos).success, true);
+  for (const k of [
+    "costUsd",
+    "costRate",
+    "expectedPriceUsd",
+    "supplier",
+    "receivedBy",
+    "purchaseMethod",
+    "purchaseDate",
+    "condition",
+    "simType",
+  ] as const)
+    assert.equal(
+      itemSchema.safeParse({ ...asos, [k]: "" }).success,
+      false,
+      k + " bo'sh bo'lsa o'tmasligi kerak",
+    );
   const v = itemSchema.parse({
     ...asos,
     brand: "Iphone",
     memory: "256",
-    simType: "sim+esim",
     color: "silver",
-    condition: "Yangi",
-    battery: "100",
+    condition: "B/U",
+    battery: "87",
     costUsd: "850.50",
-    costRate: "12800",
-    expectedPrice: "12000000",
-    supplier: "Bahodir aka",
-    receivedBy: "Jamoliddin",
-    purchaseMethod: "cash_usd",
-    purchaseDate: "2026-10-11",
   });
-  assert.equal(v.battery, 100);
+  assert.equal(v.battery, 87);
   assert.equal(v.costUsd, "850.50");
   assert.equal(v.costRate, 12_800);
   assert.equal(v.purchaseMethod, "cash_usd");
-  // Bo'sh qoldirilgan maydonlar xato bermaydi.
+  // Ixtiyoriy maydonlar bo'sh qolsa xato bermaydi.
   assert.equal(
-    itemSchema.safeParse({
-      ...asos,
-      cost: 10_000_000,
-      brand: "",
-      memory: "",
-      battery: "",
-      purchaseDate: "",
-      purchaseMethod: "",
-      supplier: "",
-    }).success,
+    itemSchema.safeParse({ ...asos, brand: "", memory: "", imei2: "" })
+      .success,
     true,
   );
   // Noto'g'ri batareyka va to'lov turi o'tmaydi.
-  for (const bad of [{ battery: "101" }, { battery: "-1" }, { purchaseMethod: "naqd" }])
+  for (const bad of [
+    { condition: "B/U", battery: "101" },
+    { condition: "B/U", battery: "-1" },
+    { purchaseMethod: "naqd" },
+  ])
     assert.equal(
-      itemSchema.safeParse({ ...asos, cost: 1_000_000, ...bad }).success,
+      itemSchema.safeParse({ ...asos, ...bad }).success,
       false,
       JSON.stringify(bad),
     );

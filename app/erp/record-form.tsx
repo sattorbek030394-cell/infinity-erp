@@ -1,8 +1,36 @@
 "use client";
 import { useRef, useState } from "react";
 import { useRouter } from "next/navigation";
-import { nasiyaTotals } from "../../lib/domain";
+import { nasiyaTotals, SIM_TURLARI } from "../../lib/domain";
 import { money } from "../../lib/filters";
+
+// Tanlov ro'yxatida "yangi nom qo'shish" bandi.
+const YANGI = "__yangi__";
+
+/** Kirimdagi bo'sh qolgan majburiy maydonlar (server ham tekshiradi). */
+function kirimBoshMaydonlar(d: Record<string, string>) {
+  const bor = (k: string) => (d[k] ?? "").trim() !== "";
+  const bosh: string[] = [];
+  const talab: [string, string][] = [
+    ["model", "Model"],
+    ["imei", "IMEI yoki seriya raqami"],
+    ["condition", "Qurilma holati"],
+    ["purchaseDate", "Kirim sanasi"],
+    ["costUsd", "Tannarx USD"],
+    ["costRate", "Kirim kursi"],
+    ["expectedPriceUsd", "Prognoz sotuv narxi USD"],
+    ["simType", "SIM turi"],
+    ["supplier", "Yetkazib beruvchi"],
+    ["receivedBy", "Qabul qiluvchi"],
+    ["purchaseMethod", "To‘lov turi"],
+  ];
+  for (const [k, nom] of talab) if (!bor(k)) bosh.push(nom);
+  if (d.condition === "B/U" && !bor("battery"))
+    bosh.push("Batareyka % (B/U uchun)");
+  if (d.purchaseMethod === "investor" && !bor("investorId"))
+    bosh.push("Kimning tovari");
+  return bosh;
+}
 export function RecordForm({
   branchId,
   kind,
@@ -10,6 +38,8 @@ export function RecordForm({
   selectedId,
   kurs = "",
   investors = [],
+  suppliers = [],
+  receivers = [],
 }: {
   branchId: string;
   kind: string;
@@ -17,6 +47,8 @@ export function RecordForm({
   selectedId?: string;
   kurs?: string;
   investors?: { id: string; name: string }[];
+  suppliers?: string[];
+  receivers?: string[];
 }) {
   const router = useRouter();
   const [message, setMessage] = useState("");
@@ -33,6 +65,14 @@ export function RecordForm({
   // Kirimda xarid turi: "investor tovari" tanlansa qaysi investor
   // ekanini ham so'raymiz.
   const [xarid, setXarid] = useState("");
+  // Kirim: qurilma holati (Yangi bo'lsa batareyka yozilmaydi), yangi
+  // ta'minotchi / qabul qiluvchi qo'lda yoziladimi, prognoz narx so'mda
+  // va aralash to'lov jami.
+  const [holat, setHolat] = useState("");
+  const [yangiTaminotchi, setYangiTaminotchi] = useState(false);
+  const [yangiQabul, setYangiQabul] = useState(false);
+  const [prognozSom, setPrognozSom] = useState(0);
+  const [aralashJami, setAralashJami] = useState(0);
   // Qarzga sotishda sotuvchi raqam kiritayotganda qolgan qarz darhol
   // ko'rinadi - mijozga aytiladigan summa shu.
   const [qarz, setQarz] = useState<{
@@ -48,7 +88,22 @@ export function RecordForm({
       const usd = Number(kind === "payments" ? d.usdAmount : d.costUsd),
         kurs = Number(kind === "payments" ? d.rate : d.costRate);
       setSom(usd > 0 && kurs > 0 ? Math.round(usd * kurs) : 0);
-      if (kind === "inventory") setXarid(d.purchaseMethod ?? "");
+      if (kind === "inventory") {
+        setXarid(d.purchaseMethod ?? "");
+        setHolat(d.condition ?? "");
+        setYangiTaminotchi(d.supplier === YANGI);
+        setYangiQabul(d.receivedBy === YANGI);
+        const prognoz = Number(d.expectedPriceUsd);
+        setPrognozSom(
+          prognoz > 0 && kurs > 0 ? Math.round(prognoz * kurs) : 0,
+        );
+        setAralashJami(
+          Math.round(Number(d.mixUsd || 0) * (kurs || 0)) +
+            Number(d.mixCash || 0) +
+            Number(d.mixCard || 0) +
+            Number(d.mixBank || 0),
+        );
+      }
       return;
     }
     if (kind === "qarz") {
@@ -99,6 +154,19 @@ export function RecordForm({
       string,
       string
     >;
+    if (kind === "inventory") {
+      // "Yangi..." tanlansa qo'lda yozilgan nom yuboriladi.
+      if (data.supplier === YANGI) data.supplier = data.supplierNew ?? "";
+      if (data.receivedBy === YANGI) data.receivedBy = data.receivedByNew ?? "";
+      delete data.supplierNew;
+      delete data.receivedByNew;
+      const bosh = kirimBoshMaydonlar(data);
+      if (bosh.length) {
+        setMessage("To‘ldirilmagan majburiy maydonlar: " + bosh.join(", "));
+        setBusy(false);
+        return;
+      }
+    }
     // Ekranda foiz, bazada bazis punkt: 5% -> 500.
     if (kind === "contracts") {
       data.monthlyRateBp = String(Math.round(Number(data.rateFoiz || 0) * 100));
@@ -140,6 +208,13 @@ export function RecordForm({
       form.reset();
       setHisob(null);
       setQarz(null);
+      setSom(0);
+      setHolat("");
+      setXarid("");
+      setYangiTaminotchi(false);
+      setYangiQabul(false);
+      setPrognozSom(0);
+      setAralashJami(0);
       key.current = null;
       lastPayload.current = null;
       router.refresh();
@@ -175,33 +250,58 @@ export function RecordForm({
   return (
     <form
       className="entry"
+      noValidate={kind === "inventory"}
       onSubmit={submit}
       onInput={(e) => hisobla(e.currentTarget)}
     >
       {kind === "inventory" ? (
         <>
           {ixtiyoriy("brand", "Brend")}
-          {field("model", "Model")}
-          {field("imei", "IMEI yoki seriya raqami")}
+          {field("model", "Model *")}
+          {field("imei", "IMEI yoki seriya raqami *")}
           {ixtiyoriy("imei2", "IMEI 2")}
           {ixtiyoriy("memory", "Xotira")}
-          {ixtiyoriy("simType", "SIM turi")}
+          <label>
+            SIM turi *
+            <select name="simType" defaultValue="">
+              <option value="">Tanlang</option>
+              {SIM_TURLARI.map((t) => (
+                <option key={t} value={t}>
+                  {t}
+                </option>
+              ))}
+            </select>
+          </label>
           {ixtiyoriy("color", "Rang")}
           {ixtiyoriy("region", "Region")}
           <label>
-            Qurilma holati
+            Qurilma holati *
             <select name="condition" defaultValue="">
-              <option value="">—</option>
+              <option value="">Tanlang</option>
               <option value="Yangi">Yangi</option>
               <option value="B/U">B/U</option>
-              <option value="Trade-in">Trade-in</option>
             </select>
           </label>
-          {ixtiyoriy("battery", "Batareyka %", "number")}
-          {ixtiyoriy("purchaseDate", "Kirim sanasi", "date")}
-          {ixtiyoriy("costUsd", "Tannarx USD")}
           <label>
-            Kirim kursi (1 USD = so‘m)
+            Batareyka %{holat === "B/U" ? " *" : ""}
+            <input
+              key={holat === "B/U" ? "bu" : "yoq"}
+              name="battery"
+              type="number"
+              min={1}
+              max={100}
+              step={1}
+              disabled={holat !== "B/U"}
+              placeholder={holat === "Yangi" ? "Yangi — yozilmaydi" : ""}
+            />
+          </label>
+          {field("purchaseDate", "Kirim sanasi *", "date")}
+          <label>
+            Tannarx USD *
+            <input name="costUsd" inputMode="decimal" placeholder="850.50" />
+          </label>
+          <label>
+            Kirim kursi (1 USD = so‘m) *
             <input
               name="costRate"
               type="number"
@@ -210,26 +310,76 @@ export function RecordForm({
               defaultValue={kurs || undefined}
             />
           </label>
-          {ixtiyoriy("cost", "Yoki tannarx UZS", "number")}
-          {ixtiyoriy("expectedPrice", "Prognoz sotuv narxi UZS", "number")}
-          {ixtiyoriy("supplier", "Yetkazib beruvchi")}
-          {ixtiyoriy("receivedBy", "Qabul qiluvchi")}
           <label>
-            To‘lov turi
+            Tannarx UZS (avtomatik)
+            <input
+              readOnly
+              tabIndex={-1}
+              value={som ? money(som) : ""}
+              placeholder="USD × kurs"
+            />
+          </label>
+          <label>
+            Prognoz sotuv narxi USD *
+            <input
+              name="expectedPriceUsd"
+              inputMode="decimal"
+              placeholder="950"
+            />
+          </label>
+          <label>
+            Yetkazib beruvchi *
+            <select name="supplier" defaultValue="">
+              <option value="">Tanlang</option>
+              {suppliers.map((n) => (
+                <option key={n} value={n}>
+                  {n}
+                </option>
+              ))}
+              <option value={YANGI}>+ Yangi yetkazib beruvchi…</option>
+            </select>
+          </label>
+          {yangiTaminotchi ? (
+            <label>
+              Yangi yetkazib beruvchi nomi *
+              <input name="supplierNew" maxLength={120} />
+            </label>
+          ) : null}
+          <label>
+            Qabul qiluvchi *
+            <select name="receivedBy" defaultValue="">
+              <option value="">Tanlang</option>
+              {receivers.map((n) => (
+                <option key={n} value={n}>
+                  {n}
+                </option>
+              ))}
+              <option value={YANGI}>+ Boshqa xodim…</option>
+            </select>
+          </label>
+          {yangiQabul ? (
+            <label>
+              Qabul qiluvchi ismi *
+              <input name="receivedByNew" maxLength={80} />
+            </label>
+          ) : null}
+          <label>
+            To‘lov turi *
             <select name="purchaseMethod" defaultValue="">
-              <option value="">—</option>
+              <option value="">Tanlang</option>
               <option value="cash_uzs">Naqd UZS</option>
               <option value="cash_usd">Naqd USD</option>
               <option value="card">Karta</option>
               <option value="bank">Hisob raqam</option>
+              <option value="mixed">Aralash</option>
               <option value="debt">Qarzga</option>
               <option value="investor">Investor tovari</option>
             </select>
           </label>
           {xarid === "investor" ? (
             <label>
-              Kimning tovari
-              <select name="investorId" required>
+              Kimning tovari *
+              <select name="investorId">
                 <option value="">Tanlang</option>
                 {investors.map((i) => (
                   <option key={i.id} value={i.id}>
@@ -239,9 +389,53 @@ export function RecordForm({
               </select>
             </label>
           ) : null}
-          {som ? (
+          {xarid === "mixed" ? (
+            <>
+              <label>
+                Naqd USD
+                <input name="mixUsd" inputMode="decimal" placeholder="500" />
+              </label>
+              <label>
+                Naqd UZS
+                <input name="mixCash" type="number" min={0} step={1} />
+              </label>
+              <label>
+                Karta UZS
+                <input name="mixCard" type="number" min={0} step={1} />
+              </label>
+              <label>
+                Hisob raqam UZS
+                <input name="mixBank" type="number" min={0} step={1} />
+              </label>
+              <p className="hisob">
+                Aralash to‘lov jami: <strong>{money(aralashJami)}</strong> ·
+                Tannarx: <strong>{som ? money(som) : "—"}</strong>
+                {som && aralashJami !== som ? (
+                  <>
+                    {" "}
+                    · Farq: <strong>{money(som - aralashJami)}</strong> — jami
+                    tannarxga teng bo‘lishi kerak
+                  </>
+                ) : null}
+              </p>
+            </>
+          ) : null}
+          {som || prognozSom ? (
             <p className="hisob">
-              Tannarx so‘mda: <strong>{money(som)}</strong>
+              Tannarx so‘mda: <strong>{som ? money(som) : "—"}</strong>
+              {prognozSom ? (
+                <>
+                  {" "}
+                  · Prognoz sotuv so‘mda: <strong>{money(prognozSom)}</strong>
+                  {som ? (
+                    <>
+                      {" "}
+                      · Kutilgan marja:{" "}
+                      <strong>{money(prognozSom - som)}</strong>
+                    </>
+                  ) : null}
+                </>
+              ) : null}
             </p>
           ) : null}
         </>

@@ -2,7 +2,7 @@ import { redirect } from "next/navigation";
 import { z } from "zod";
 import { currentUser } from "../../lib/auth";
 import { db } from "../../lib/db";
-import { readBranch } from "../../lib/service";
+import { readBranch, kirimRoyxatlari } from "../../lib/service";
 import { can, rollarAmal } from "../../lib/domain";
 import { readPaymentHistory } from "../../lib/history";
 import {
@@ -134,6 +134,11 @@ export default async function ERP({
   // Kirim formasidagi "investor tovari" tanlovi uchun ismlar ro'yxati.
   const investorNomlari =
     tab === "inventory" ? await investorRoyxati(branch) : [];
+  // Kirim formasidagi "Yetkazib beruvchi" va "Qabul qiluvchi" tanlovlari.
+  const kirimRoyxat =
+    tab === "inventory"
+      ? await kirimRoyxatlari(branch)
+      : { taminotchilar: [], qabulQiluvchilar: [] };
   const items = data.items.filter(
     (i) =>
       matchesSearch(
@@ -340,6 +345,8 @@ export default async function ERP({
                 items={[]}
                 kurs={data.kurs}
                 investors={investorNomlari}
+                suppliers={kirimRoyxat.taminotchilar}
+                receivers={kirimRoyxat.qabulQiluvchilar}
               />
             )}
             <SearchForm
@@ -390,7 +397,16 @@ export default async function ERP({
                         </small>
                       ) : null}
                     </td>
-                    <td>{i.expected_price ? money(i.expected_price) : "—"}</td>
+                    <td>
+                      {i.expected_price_usd_cents
+                        ? cashMoney(i.expected_price_usd_cents, "cash_usd")
+                        : i.expected_price
+                          ? money(i.expected_price)
+                          : "—"}
+                      {i.expected_price_usd_cents && i.expected_price ? (
+                        <small>{money(i.expected_price)}</small>
+                      ) : null}
+                    </td>
                     <td>{i.status === "available" ? "Omborda" : "Sotilgan"}</td>
                   </tr>
                 ))}
